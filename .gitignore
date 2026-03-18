@@ -33,6 +33,12 @@ yarn-error.*
 # local env files
 .env*.local
 
+# Firebase service account (never commit!)
+serviceAccountKey.json
+
+# Password update config (contains passwords - never commit!)
+scripts/password-updates.config.json
+
 # typescript
 *.tsbuildinfo
 

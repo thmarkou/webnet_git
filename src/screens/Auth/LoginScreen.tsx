@@ -1,7 +1,7 @@
 /**
- * Login screen - includes Forgot Password
+ * Login screen - includes Forgot Password, remembers last email
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -20,6 +20,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LogIn } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
+import { getLastEmail, setLastEmail } from '../../utils/lastEmail';
 
 type AuthStackParamList = {
   Login: undefined;
@@ -36,6 +37,12 @@ export default function LoginScreen() {
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
 
+  useEffect(() => {
+    getLastEmail().then((saved) => {
+      if (saved) setEmail(saved);
+    });
+  }, []);
+
   const handleLogin = async () => {
     if (!email.trim() || !password) {
       Alert.alert('Σφάλμα', 'Συμπλήρωσε email και κωδικό.');
@@ -44,7 +51,9 @@ export default function LoginScreen() {
 
     setLoading(true);
     try {
-      await signIn(email.trim(), password);
+      const trimmedEmail = email.trim();
+      await signIn(trimmedEmail, password);
+      await setLastEmail(trimmedEmail);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Σφάλμα σύνδεσης';
       Alert.alert('Σφάλμα', message);

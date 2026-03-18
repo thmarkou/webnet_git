@@ -80,12 +80,12 @@
 
 ---
 
-## 9. Debug Login (μόνο σε development)
+## 9. Remember Email (αυτόματη συμπλήρωση)
 
-- **Login as Test User** → theofanis.markou@gmail.com
-- **Login as Test Pro** → fanis.markou@resilienceguard.ch
-- Κωδικός: `Test1234!`
-- Εμφανίζονται μόνο όταν `__DEV__ === true`
+- Αποθήκευση του τελευταίου email μετά από επιτυχημένο login (AsyncStorage)
+- Προσυμπλήρωση του πεδίου email κάθε φορά που ανοίγει η οθόνα σύνδεσης
+- Αρχείο: `src/utils/lastEmail.ts` — `getLastEmail()`, `setLastEmail()`
+- Dependency: `@react-native-async-storage/async-storage`
 
 ---
 
@@ -105,8 +105,9 @@
 |--------|--------|
 | `src/utils/haversine.ts` | Υπολογισμός απόστασης (km) |
 | `src/utils/imageUtils.ts` | `getProfileImageUri()` για Base64/URL |
-| `DEBUG_LOGIN.md` | Ρύθμιση debug accounts |
+| `src/utils/lastEmail.ts` | Αποθήκευση/φόρτωση τελευταίου email για login |
 | `DEPENDENCIES_MEDIA.md` | expo-image-picker, react-native-maps, expo-location |
+| `PASSWORD_UPDATE.md` | Οδηγίες ενημέρωσης κωδικών με Firebase Admin |
 
 ---
 
