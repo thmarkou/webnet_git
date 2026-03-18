@@ -1,5 +1,5 @@
 /**
- * Login screen - includes Forgot Password and Debug Login (dev only)
+ * Login screen - includes Forgot Password
  */
 import React, { useState } from 'react';
 import {
@@ -20,14 +20,6 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { LogIn } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
-
-/** Test password for debug accounts - ensure these accounts exist in Firebase with this password */
-const DEBUG_TEST_PASSWORD = 'Test1234!';
-
-const DEBUG_ACCOUNTS = {
-  user: { email: 'theofanis.markou@gmail.com', label: 'Test User' },
-  pro: { email: 'fanis.markou@resilienceguard.ch', label: 'Test Pro' },
-} as const;
 
 type AuthStackParamList = {
   Login: undefined;
@@ -56,22 +48,6 @@ export default function LoginScreen() {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Σφάλμα σύνδεσης';
       Alert.alert('Σφάλμα', message);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDebugLogin = async (type: 'user' | 'pro') => {
-    const { email: debugEmail } = DEBUG_ACCOUNTS[type];
-    setLoading(true);
-    try {
-      await signIn(debugEmail, DEBUG_TEST_PASSWORD);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Σφάλμα σύνδεσης';
-      Alert.alert(
-        'Debug Login Failed',
-        `${message}\n\nEnsure the account exists in Firebase with password: ${DEBUG_TEST_PASSWORD}`
-      );
     } finally {
       setLoading(false);
     }
@@ -149,30 +125,6 @@ export default function LoginScreen() {
               <Text style={styles.buttonText}>Σύνδεση</Text>
             )}
           </TouchableOpacity>
-
-          {__DEV__ && (
-            <View style={styles.debugSection}>
-              <Text style={styles.debugLabel}>Debug (dev only)</Text>
-              <TouchableOpacity
-                style={styles.debugButton}
-                onPress={() => handleDebugLogin('user')}
-                disabled={loading}
-              >
-                <Text style={styles.debugButtonText}>
-                  Login as Test User
-                </Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.debugButton, styles.debugButtonPro]}
-                onPress={() => handleDebugLogin('pro')}
-                disabled={loading}
-              >
-                <Text style={styles.debugButtonText}>
-                  Login as Test Pro
-                </Text>
-              </TouchableOpacity>
-            </View>
-          )}
 
           <TouchableOpacity
             style={styles.link}
@@ -261,17 +213,6 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: { opacity: 0.7 },
   buttonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
-  debugSection: { marginTop: 24, paddingTop: 24, borderTopWidth: 1, borderTopColor: '#e2e8f0' },
-  debugLabel: { fontSize: 12, color: '#94a3b8', marginBottom: 8, textAlign: 'center' },
-  debugButton: {
-    backgroundColor: '#64748b',
-    borderRadius: 8,
-    paddingVertical: 10,
-    alignItems: 'center',
-    marginBottom: 8,
-  },
-  debugButtonPro: { backgroundColor: '#059669' },
-  debugButtonText: { color: '#fff', fontSize: 14 },
   link: { alignItems: 'center', marginTop: 20 },
   linkText: { color: '#2563eb', fontSize: 14 },
   modalOverlay: {

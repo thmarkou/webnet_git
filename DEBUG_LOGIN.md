@@ -1,26 +1,9 @@
-# Debug Login (Development Only)
+# Debug Login (Removed for Public Repo)
 
-The Login screen shows two debug buttons **only when running in development mode** (`__DEV__ === true`).
+The Debug Login buttons were removed from the public repository for security reasons.
 
-## Test Accounts
+To add them back locally for development (do not commit):
 
-| Button | Email | Role |
-|--------|-------|------|
-| Login as Test User | theofanis.markou@gmail.com | Simple User |
-| Login as Test Pro | fanis.markou@resilienceguard.ch | Professional |
-
-## Setup
-
-1. Create these accounts in Firebase Authentication (or use existing ones).
-2. Set the password to **`Test1234!`** for both accounts.
-3. Ensure Firestore has user documents for each:
-   - **Test User:** `users/{uid}` with `role: 'user'`
-   - **Test Pro:** `users/{uid}` with `role: 'pro'` and professional fields
-
-## Changing the Password
-
-Edit `src/screens/Auth/LoginScreen.tsx` and update `DEBUG_TEST_PASSWORD`.
-
-## Production
-
-Debug buttons are **not shown** in production builds (`__DEV__` is false).
+1. Add the debug section to `LoginScreen.tsx` with your test accounts.
+2. Use environment variables for the password instead of hardcoding.
+3. Keep the repo in `.gitignore` or use a separate private branch.
