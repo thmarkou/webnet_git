@@ -12,9 +12,20 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.webnet.app",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Η εφαρμογή χρειάζεται πρόσβαση στη φωτογραφική σου συλλογή για να ανεβάσεις φωτογραφία προφίλ.",
+        "NSLocationWhenInUseUsageDescription": "Η εφαρμογή χρειάζεται την τοποθεσία σου για να εμφανίσει τον χάρτη και την απόσταση από επαγγελματίες."
+      }
     },
     "android": {
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "READ_EXTERNAL_STORAGE",
+        "READ_MEDIA_IMAGES"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/android-icon-foreground.png",
