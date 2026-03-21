@@ -2,6 +2,11 @@
 
 Σύνοψη όλων των αλλαγών που έγιναν σήμερα στο webnet_app.
 
+### Δομή repo (μία ρίζα)
+
+- Το project ζει σε **ένα** root φάκελο (όπου είναι `package.json` + `expo`). Από εκεί τρέχουν όλες οι εντολές.
+- Βλ. `README.md` — αποφεύγεις το λάθος «expo is not installed» από λάθος working directory.
+
 ---
 
 ## 1. Δομή Project & Firebase

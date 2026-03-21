@@ -1,0 +1,43 @@
+# webnet_app Project Rules
+
+## Dependency Isolation
+
+- **Always use local dependencies** from `node_modules`. Never rely on globally installed packages.
+- Run `npm install` from the project directory to ensure all dependencies are available locally.
+- Use `npm run clean-install` when you need a fresh environment (removes node_modules and package-lock.json, then reinstalls).
+
+## Repository root (μία ρίζα)
+
+- Το **root** του project είναι ο φάκελος που περιέχει αυτό το `package.json` με dependency **`expo`**.
+- Τρέχεις **πάντα** από εδώ: `npm install`, `npx expo start`, `npx expo prebuild`, `npm run ios` — **όχι** από γονικό φάκελο (`.../cursor/` κ.λπ.).
+- Αν βλέπεις δύο εμφωλευμένους φακέλους `webnet_app`, κράτα μόνο αυτόν που έχει `expo` στο `package.json`.
+
+## Project Structure
+
+Ακολούθησε τη δομή φακέλων (ρίζα repo):
+
+```
+./
+├── src/
+│   ├── api/          # Firebase config, types, API calls
+│   ├── components/   # Reusable UI components (Cards, Buttons)
+│   ├── context/      # AuthContext, GlobalState
+│   ├── hooks/        # Custom hooks (useSearch, useFriends)
+│   ├── navigation/   # AuthStack, MainStack, navigators
+│   └── screens/      # Auth, User, Professional, Admin screens
+├── App.tsx
+├── global.css
+└── ...
+```
+
+- Place new API logic in `src/api/`
+- Place reusable UI in `src/components/`
+- Place screens in `src/screens/` under Auth, User, Professional, or Admin
+- Place navigation in `src/navigation/`
+- Place context providers in `src/context/`
+- Place custom hooks in `src/hooks/`
+
+## Node Version
+
+- Use the Node version specified in `.nvmrc` (run `nvm use` before working).
+- Do not assume a different Node version.

@@ -8,7 +8,8 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "clean-install": "rm -rf node_modules package-lock.json && npm install"
+    "clean-install": "rm -rf node_modules package-lock.json && npm install",
+    "sync-brand-assets": "bash scripts/sync-brand-assets.sh"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
