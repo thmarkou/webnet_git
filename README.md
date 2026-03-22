@@ -31,4 +31,4 @@ npx expo start
 
 Βλ. `BRANDING.md`, `FIREBASE_SETUP.md`, `XCODE_SETUP.md`, `PASSWORD_UPDATE.md`, `SEED_FIRESTORE.md`.
 
-**Changelog:** `CHANGELOG_2026-03-18.md` (τελευταία μεγάλη ενημέρωση) · `CHANGELOG_2025-03-18.md` (αρχική σύνοψη).
+**Changelog:** `CHANGELOG_2026-03-22.md` (τελευταία μεγάλη ενημέρωση, 22/3) · `CHANGELOG_2025-03-18.md` (αρχική σύνοψη).
