@@ -22,6 +22,21 @@ export default function SettingsScreen() {
       {userProfile && (
         <Text style={styles.email}>{userProfile.email}</Text>
       )}
+      {__DEV__ && (
+        <TouchableOpacity
+          style={styles.devButton}
+          onPress={() =>
+            Alert.alert(
+              'Dev',
+              'Δεν υπάρχει πλέον seed script. Δημιούργησε επαγγελματίες από την εγγραφή στην εφαρμογή.',
+              [{ text: 'OK' }]
+            )
+          }
+        >
+          <Text style={styles.devButtonText}>Dev: δεδομένα δοκιμών</Text>
+        </TouchableOpacity>
+      )}
+
       <TouchableOpacity style={styles.button} onPress={handleSignOut}>
         <LogOut size={20} color="#fff" />
         <Text style={styles.buttonText}>Αποσύνδεση</Text>
@@ -34,6 +49,15 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc', padding: 24 },
   title: { fontSize: 24, fontWeight: '700', color: '#0f172a', marginBottom: 8 },
   email: { fontSize: 14, color: '#64748b', marginBottom: 24 },
+  devButton: {
+    backgroundColor: '#e2e8f0',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    alignItems: 'center',
+  },
+  devButtonText: { fontSize: 14, fontWeight: '600', color: '#334155' },
   button: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -1,8 +1,8 @@
 /**
  * Registration screen for professionals
- * Includes: Photo upload, Map with location pin, all business fields
+ * Photo, Map + συγχρονισμός διεύθυνσης ↔ pin (geocode / reverse geocode)
  */
-import React, { useState } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import {
   View,
   Text,
@@ -18,12 +18,19 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { Briefcase, Camera, MapPin } from 'lucide-react-native';
+import { Briefcase, MapPin } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
 import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { useAuth } from '../../context/AuthContext';
+import { FormSelect } from '../../components/FormSelect';
+import { CITY_LABELS, PROFESSIONS, getCityByLabel, matchCityFromGeocode } from '../../constants/data';
+import type { ProfileDisplayType } from '../../api/types';
+import {
+  profileDisplayTypeToAvatarKind,
+  ProfessionalAvatarIcon,
+} from '../../assets/avatars';
 
 type AuthStackParamList = {
   Login: undefined;
@@ -32,22 +39,29 @@ type AuthStackParamList = {
   RegisterProfessional: undefined;
 };
 
-const DEFAULT_REGION = {
-  latitude: 37.9838,
-  longitude: 23.7275,
-  latitudeDelta: 0.05,
-  longitudeDelta: 0.05,
-};
+/** Zoom όταν επιλέγεις πόλη / γενική θέα */
+const MAP_DELTA_WIDE = { latitudeDelta: 0.06, longitudeDelta: 0.06 };
+/** Zoom μετά από επιτυχές geocode ή μετακίνηση pin — ακριβέστερο σημείο */
+const MAP_DELTA_PRECISE = { latitudeDelta: 0.004, longitudeDelta: 0.004 };
 
 export default function RegisterProfessionalScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { signUpProfessional } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [geocoding, setGeocoding] = useState(false);
   const [profileImageUri, setProfileImageUri] = useState<string | null>(null);
   const [profileImageBase64, setProfileImageBase64] = useState<string | null>(null);
-  const [region, setRegion] = useState(DEFAULT_REGION);
+  const [region, setRegion] = useState({
+    latitude: 37.9838,
+    longitude: 23.7275,
+    ...MAP_DELTA_WIDE,
+  });
+  const [geocodeHint, setGeocodeHint] = useState<string | null>(null);
+  const [profileDisplayType, setProfileDisplayType] = useState<ProfileDisplayType>('male');
   const [latitude, setLatitude] = useState<number | undefined>();
   const [longitude, setLongitude] = useState<number | undefined>();
+  const updatingFromMapRef = useRef(false);
+
   const [form, setForm] = useState({
     firstName: '',
     lastName: '',
@@ -64,7 +78,7 @@ export default function RegisterProfessionalScreen() {
     area: '',
     zip: '',
     city: '',
-    country: '',
+    country: 'Ελλάδα',
     serviceName: '',
     serviceDesc: '',
     serviceDuration: '',
@@ -74,6 +88,121 @@ export default function RegisterProfessionalScreen() {
   const updateField = (field: keyof typeof form, value: string) => {
     setForm((prev) => ({ ...prev, [field]: value }));
   };
+
+  const moveMapTo = useCallback((lat: number, lng: number, mode: 'wide' | 'precise' = 'precise') => {
+    const d = mode === 'wide' ? MAP_DELTA_WIDE : MAP_DELTA_PRECISE;
+    setRegion({
+      latitude: lat,
+      longitude: lng,
+      ...d,
+    });
+  }, []);
+
+  /** Reverse geocode → πεδία φόρμας (μετά από μετακίνηση pin) */
+  const applyReverseGeocode = useCallback(
+    async (lat: number, lng: number) => {
+      updatingFromMapRef.current = true;
+      setGeocoding(true);
+      try {
+        const results = await Location.reverseGeocodeAsync({ latitude: lat, longitude: lng });
+        const a = results[0];
+        if (!a) return;
+
+        const street = a.street ?? a.name ?? '';
+        const num = a.streetNumber ?? '';
+
+        setForm((prev) => {
+          const matched = matchCityFromGeocode(a.city ?? a.region ?? a.subregion ?? undefined);
+          const countryName =
+            a.isoCountryCode === 'GR' || (a.country ?? '').toLowerCase().includes('greece')
+              ? 'Ελλάδα'
+              : a.country ?? 'Ελλάδα';
+          return {
+            ...prev,
+            address: street || prev.address,
+            addressNumber: num || prev.addressNumber,
+            area: a.district ?? a.subregion ?? a.region ?? prev.area,
+            zip: a.postalCode ?? prev.zip,
+            city: matched?.label ?? prev.city,
+            country: countryName,
+          };
+        });
+      } catch {
+        // αγνοούμε — offline / limit
+      } finally {
+        setGeocoding(false);
+        setTimeout(() => {
+          updatingFromMapRef.current = false;
+        }, 150);
+      }
+    },
+    []
+  );
+
+  const onPinMoved = useCallback(
+    (lat: number, lng: number) => {
+      setLatitude(lat);
+      setLongitude(lng);
+      moveMapTo(lat, lng, 'precise');
+      setGeocodeHint(null);
+      void applyReverseGeocode(lat, lng);
+    },
+    [moveMapTo, applyReverseGeocode]
+  );
+
+  /** Κουμπί «Επαλήθευση»: geocodeAsync → μετακίνηση pin για οπτικό έλεγχο πριν την υποβολή */
+  const verifyAddress = useCallback(async () => {
+    const { address, addressNumber, city, country, zip, area } = form;
+    if (!city.trim() || !address.trim()) {
+      Alert.alert('Συμπλήρωσε οδό και πόλη.');
+      return;
+    }
+    if (!zip.trim()) {
+      Alert.alert('Συμπλήρωσε ΤΚ', 'Ο ταχυδρομικός κώδικας βοηθά το geocoding να βρει το ακριβές σημείο.');
+      return;
+    }
+    if (updatingFromMapRef.current) return;
+
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Άρνηση πρόσβασης', 'Χρειάζεται άδεια τοποθεσίας για επαλήθευση διεύθυνσης.');
+      return;
+    }
+
+    const streetLine = [address.trim(), addressNumber.trim()].filter(Boolean).join(' ').trim();
+    const locality = [zip.trim(), area.trim(), city.trim()].filter(Boolean).join(', ');
+    const primary =
+      country.trim() === 'Ελλάδα' || !country.trim()
+        ? `${streetLine}, ${locality}, Greece`
+        : `${streetLine}, ${locality}, ${country.trim()}`;
+    const fallback = `${streetLine}, ${city.trim()}, Greece`;
+
+    setGeocoding(true);
+    setGeocodeHint(null);
+    try {
+      let results = await Location.geocodeAsync(primary);
+      if (!results?.length) {
+        results = await Location.geocodeAsync(fallback);
+      }
+      const first = results[0];
+      if (first && first.latitude != null && first.longitude != null) {
+        setLatitude(first.latitude);
+        setLongitude(first.longitude);
+        moveMapTo(first.latitude, first.longitude, 'precise');
+        setGeocodeHint(
+          'Έλεγχος OK — δες το pin. Σύρε το στο ακριβές σημείο αν χρειάζεται· αυτές οι συντεταγμένες αποθηκεύονται.'
+        );
+      } else {
+        setGeocodeHint(
+          'Δεν βρέθηκε σημείο — όρισε το pin στον χάρτη (πάτημα / σύρσιμο) ή «Τρέχουσα τοποθεσία».'
+        );
+      }
+    } catch {
+      setGeocodeHint('Αποτυχία geocoding — όρισε το pin χειροκίνητα στον χάρτη.');
+    } finally {
+      setGeocoding(false);
+    }
+  }, [form, moveMapTo]);
 
   const pickImage = async () => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -115,22 +244,31 @@ export default function RegisterProfessionalScreen() {
       Alert.alert('Άρνηση πρόσβασης', 'Χρειάζεται πρόσβαση στην τοποθεσία σου.');
       return;
     }
-    const loc = await Location.getCurrentPositionAsync({});
-    const { latitude: lat, longitude: lng } = loc.coords;
-    setLatitude(lat);
-    setLongitude(lng);
-    setRegion({
-      latitude: lat,
-      longitude: lng,
-      latitudeDelta: 0.01,
-      longitudeDelta: 0.01,
+    const loc = await Location.getCurrentPositionAsync({
+      accuracy: Location.Accuracy.BestForNavigation,
     });
+    const { latitude: lat, longitude: lng } = loc.coords;
+    onPinMoved(lat, lng);
   };
 
   const handleMapPress = (e: { nativeEvent: { coordinate: { latitude: number; longitude: number } } }) => {
     const { latitude: lat, longitude: lng } = e.nativeEvent.coordinate;
-    setLatitude(lat);
-    setLongitude(lng);
+    onPinMoved(lat, lng);
+  };
+
+  const handleCitySelect = (cityLabel: string) => {
+    const c = getCityByLabel(cityLabel);
+    setForm((prev) => ({
+      ...prev,
+      city: cityLabel,
+      country: c?.country ?? prev.country,
+    }));
+    if (c) {
+      setLatitude(c.latitude);
+      setLongitude(c.longitude);
+      moveMapTo(c.latitude, c.longitude, 'wide');
+      setGeocodeHint('Επίλεξε οδό και αριθμό για ακριβές σημείο, ή μετακίνησε το pin.');
+    }
   };
 
   const handleSubmit = async () => {
@@ -143,6 +281,8 @@ export default function RegisterProfessionalScreen() {
       businessName,
       vat,
       address,
+      profession,
+      city,
     } = form;
 
     if (
@@ -152,11 +292,15 @@ export default function RegisterProfessionalScreen() {
       !password ||
       !businessName.trim() ||
       !vat.trim() ||
-      !address.trim()
+      !address.trim() ||
+      !form.addressNumber.trim() ||
+      !form.zip.trim() ||
+      !profession ||
+      !city
     ) {
       Alert.alert(
         'Σφάλμα',
-        'Συμπλήρωσε τα υποχρεωτικά πεδία: Όνομα, Επώνυμο, Email, Κωδικός, Επωνυμία Επιχείρησης, ΑΦΜ, Διεύθυνση.'
+        'Συμπλήρωσε τα υποχρεωτικά: Όνομα, Επώνυμο, Email, Κωδικός, Επωνυμία, ΑΦΜ, Οδός, Αριθμός, ΤΚ, Επάγγελμα, Πόλη — και όρισε pin στον χάρτη.'
       );
       return;
     }
@@ -166,8 +310,15 @@ export default function RegisterProfessionalScreen() {
       return;
     }
 
+    if (latitude == null || longitude == null) {
+      Alert.alert(
+        'Σφάλμα',
+        'Όρισε τοποθεσία: πάτησε «Επαλήθευση διεύθυνσης», ή πάτησε στον χάρτη, ή «Τρέχουσα τοποθεσία», και σύρε το pin αν χρειάζεται.'
+      );
+      return;
+    }
+
     setLoading(true);
-    setUploadingPhoto(false);
     try {
       await signUpProfessional({
         email: email.trim(),
@@ -175,8 +326,8 @@ export default function RegisterProfessionalScreen() {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         phone: phone.trim(),
-        profession: form.profession.trim(),
-        location: form.city.trim(),
+        profession: profession.trim(),
+        location: `${city.trim()}, ${form.country.trim() || 'Ελλάδα'}`,
         businessName: businessName.trim(),
         vat: vat.trim(),
         website: form.website.trim(),
@@ -185,9 +336,10 @@ export default function RegisterProfessionalScreen() {
         addressNumber: form.addressNumber.trim(),
         area: form.area.trim(),
         zip: form.zip.trim(),
-        city: form.city.trim(),
-        country: form.country.trim(),
-        profileImageBase64: profileImageBase64 ?? undefined,
+        city: city.trim(),
+        country: form.country.trim() || 'Ελλάδα',
+        profileDisplayType,
+        profileImageBase64: profileImageBase64 ?? null,
         latitude,
         longitude,
         serviceName: form.serviceName.trim(),
@@ -215,13 +367,44 @@ export default function RegisterProfessionalScreen() {
         <View style={styles.header}>
           <Briefcase size={48} color="#059669" strokeWidth={2} />
           <Text style={styles.title}>Εγγραφή Επαγγελματία</Text>
-          <Text style={styles.subtitle}>
-            Δημιούργησε λογαριασμό ως επαγγελματίας
-          </Text>
+          <Text style={styles.subtitle}>Δημιούργησε λογαριασμό ως επαγγελματίας</Text>
         </View>
 
         <View style={styles.form}>
-          <Text style={styles.sectionLabel}>Φωτογραφία προφίλ</Text>
+          <Text style={styles.sectionLabel}>Τύπος προφίλ *</Text>
+          <Text style={styles.hintSmall}>
+            Αν δεν ανεβάσεις φωτογραφία, εμφανίζεται το αντίστοιχο εικονίδιο (άνδρας / γυναίκα / εταιρεία).
+          </Text>
+          <View style={styles.profileTypeRow}>
+            {(
+              [
+                { key: 'male' as ProfileDisplayType, label: 'Άνδρας' },
+                { key: 'female' as ProfileDisplayType, label: 'Γυναίκα' },
+                { key: 'company' as ProfileDisplayType, label: 'Εταιρεία' },
+              ] as const
+            ).map(({ key, label }) => (
+              <TouchableOpacity
+                key={key}
+                style={[
+                  styles.profileTypeChip,
+                  profileDisplayType === key && styles.profileTypeChipActive,
+                ]}
+                onPress={() => setProfileDisplayType(key)}
+                disabled={loading}
+              >
+                <Text
+                  style={[
+                    styles.profileTypeChipText,
+                    profileDisplayType === key && styles.profileTypeChipTextActive,
+                  ]}
+                >
+                  {label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          <Text style={[styles.sectionLabel, { marginTop: 16 }]}>Φωτογραφία προφίλ</Text>
           <TouchableOpacity
             style={styles.photoButton}
             onPress={pickImage}
@@ -230,31 +413,92 @@ export default function RegisterProfessionalScreen() {
             {profileImageUri ? (
               <Image source={{ uri: profileImageUri }} style={styles.photoPreview} />
             ) : (
-              <View style={styles.photoPlaceholder}>
-                <Camera size={40} color="#94a3b8" />
-                <Text style={styles.photoText}>
-                  Ανέβασε φωτογραφία προφίλ
-                </Text>
+              <View style={styles.photoPlaceholderWithIcon}>
+                <ProfessionalAvatarIcon
+                  kind={profileDisplayTypeToAvatarKind(profileDisplayType)}
+                  size={48}
+                  color="#fff"
+                />
+                <Text style={styles.photoTextOnGreen}>Πάτα για φωτογραφία (προαιρετικό)</Text>
               </View>
             )}
           </TouchableOpacity>
 
-          <Text style={[styles.sectionLabel, { marginTop: 16 }]}>Τοποθεσία στον χάρτη</Text>
+          <Text style={[styles.sectionLabel, { marginTop: 16 }]}>Διεύθυνση εργασίας & χάρτης</Text>
+          <Text style={styles.hint}>
+            Συμπλήρωσε οδό, αριθμό, ΤΚ και πόλη· πάτα «Επαλήθευση διεύθυνσης» για geocode και εμφάνιση pin. Σύρε
+            το pin στο ακριβές σημείο πριν την εγγραφή — αυτές οι συντεταγμένες αποθηκεύονται στο Firestore.
+          </Text>
+          <TextInput
+            style={styles.input}
+            placeholder="Διεύθυνση (οδός) *"
+            placeholderTextColor="#94a3b8"
+            value={form.address}
+            onChangeText={(v) => updateField('address', v)}
+            editable={!loading}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Αριθμός *"
+            placeholderTextColor="#94a3b8"
+            value={form.addressNumber}
+            onChangeText={(v) => updateField('addressNumber', v)}
+            keyboardType="default"
+            editable={!loading}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="Περιοχή"
+            placeholderTextColor="#94a3b8"
+            value={form.area}
+            onChangeText={(v) => updateField('area', v)}
+            editable={!loading}
+          />
+          <FormSelect
+            label="Πόλη *"
+            value={form.city}
+            options={CITY_LABELS}
+            onChange={handleCitySelect}
+            placeholder="Επίλεξε πόλη"
+            disabled={loading}
+          />
+          <TextInput
+            style={styles.input}
+            placeholder="ΤΚ *"
+            placeholderTextColor="#94a3b8"
+            value={form.zip}
+            onChangeText={(v) => updateField('zip', v)}
+            keyboardType="number-pad"
+            editable={!loading}
+          />
+          <View style={styles.countryRow}>
+            <Text style={styles.countryLabel}>Χώρα</Text>
+            <Text style={styles.countryValue}>{form.country || '—'}</Text>
+          </View>
+
+          <TouchableOpacity
+            style={[styles.verifyButton, (loading || geocoding) && styles.buttonDisabled]}
+            onPress={() => void verifyAddress()}
+            disabled={loading || geocoding}
+          >
+            {geocoding ? (
+              <ActivityIndicator color="#fff" />
+            ) : (
+              <Text style={styles.verifyButtonText}>Επαλήθευση διεύθυνσης (χάρτης)</Text>
+            )}
+          </TouchableOpacity>
+
+          {geocodeHint ? <Text style={styles.geocodeHint}>{geocodeHint}</Text> : null}
+
           <View style={styles.mapContainer}>
-            <MapView
-              style={styles.map}
-              region={region}
-              onRegionChangeComplete={setRegion}
-              onPress={handleMapPress}
-            >
-              {(latitude != null && longitude != null) && (
+            <MapView style={styles.map} region={region} onPress={handleMapPress}>
+              {latitude != null && longitude != null && (
                 <Marker
                   coordinate={{ latitude, longitude }}
                   draggable
                   onDragEnd={(e) => {
                     const { latitude: lat, longitude: lng } = e.nativeEvent.coordinate;
-                    setLatitude(lat);
-                    setLongitude(lng);
+                    onPinMoved(lat, lng);
                   }}
                 />
               )}
@@ -268,9 +512,12 @@ export default function RegisterProfessionalScreen() {
               <Text style={styles.locationButtonText}>Τρέχουσα τοποθεσία</Text>
             </TouchableOpacity>
           </View>
-          {(latitude != null && longitude != null) && (
+          {(geocoding || loading) && (
+            <Text style={styles.coordsText}>Ενημέρωση τοποθεσίας…</Text>
+          )}
+          {latitude != null && longitude != null && !geocoding && (
             <Text style={styles.coordsText}>
-              Συντεταγμένες: {latitude.toFixed(5)}, {longitude.toFixed(5)}
+              Τελικές συντεταγμένες (αποθήκευση): {latitude.toFixed(6)}, {longitude.toFixed(6)}
             </Text>
           )}
 
@@ -341,13 +588,13 @@ export default function RegisterProfessionalScreen() {
             maxLength={9}
             editable={!loading}
           />
-          <TextInput
-            style={styles.input}
-            placeholder="Επάγγελμα"
-            placeholderTextColor="#94a3b8"
+          <FormSelect
+            label="Επάγγελμα *"
             value={form.profession}
-            onChangeText={(v) => updateField('profession', v)}
-            editable={!loading}
+            options={PROFESSIONS}
+            onChange={(v) => updateField('profession', v)}
+            placeholder="Επίλεξε επάγγελμα"
+            disabled={loading}
           />
           <TextInput
             style={styles.input}
@@ -367,58 +614,6 @@ export default function RegisterProfessionalScreen() {
             onChangeText={(v) => updateField('bio', v)}
             multiline
             numberOfLines={3}
-            editable={!loading}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Διεύθυνση *"
-            placeholderTextColor="#94a3b8"
-            value={form.address}
-            onChangeText={(v) => updateField('address', v)}
-            editable={!loading}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Αριθμός"
-            placeholderTextColor="#94a3b8"
-            value={form.addressNumber}
-            onChangeText={(v) => updateField('addressNumber', v)}
-            keyboardType="number-pad"
-            editable={!loading}
-          />
-          <TextInput
-            style={styles.input}
-            placeholder="Περιοχή"
-            placeholderTextColor="#94a3b8"
-            value={form.area}
-            onChangeText={(v) => updateField('area', v)}
-            editable={!loading}
-          />
-          <View style={styles.row}>
-            <TextInput
-              style={[styles.input, styles.inputHalf]}
-              placeholder="ΤΚ"
-              placeholderTextColor="#94a3b8"
-              value={form.zip}
-              onChangeText={(v) => updateField('zip', v)}
-              keyboardType="number-pad"
-              editable={!loading}
-            />
-            <TextInput
-              style={[styles.input, styles.inputHalf]}
-              placeholder="Πόλη"
-              placeholderTextColor="#94a3b8"
-              value={form.city}
-              onChangeText={(v) => updateField('city', v)}
-              editable={!loading}
-            />
-          </View>
-          <TextInput
-            style={styles.input}
-            placeholder="Χώρα"
-            placeholderTextColor="#94a3b8"
-            value={form.country}
-            onChangeText={(v) => updateField('country', v)}
             editable={!loading}
           />
 
@@ -493,6 +688,32 @@ const styles = StyleSheet.create({
   title: { fontSize: 24, fontWeight: '700', color: '#0f172a', marginTop: 12 },
   subtitle: { fontSize: 14, color: '#64748b', marginTop: 4 },
   form: { gap: 12 },
+  hint: { fontSize: 12, color: '#64748b', marginBottom: 8, lineHeight: 18 },
+  hintSmall: { fontSize: 11, color: '#94a3b8', marginBottom: 8, lineHeight: 16 },
+  geocodeHint: { fontSize: 12, color: '#2563eb', marginBottom: 8, lineHeight: 18 },
+  profileTypeRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  profileTypeChip: {
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    backgroundColor: '#e2e8f0',
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  profileTypeChipActive: {
+    backgroundColor: '#d1fae5',
+    borderColor: '#059669',
+  },
+  profileTypeChipText: { fontSize: 14, fontWeight: '600', color: '#475569' },
+  profileTypeChipTextActive: { color: '#047857' },
+  verifyButton: {
+    backgroundColor: '#2563eb',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  verifyButtonText: { color: '#fff', fontSize: 16, fontWeight: '600' },
   sectionLabel: {
     fontSize: 14,
     fontWeight: '600',
@@ -512,8 +733,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  photoPlaceholderWithIcon: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#059669',
+    padding: 8,
+  },
   photoPreview: { width: '100%', height: '100%', resizeMode: 'cover' },
   photoText: { fontSize: 12, color: '#64748b', marginTop: 4, textAlign: 'center' },
+  photoTextOnGreen: { fontSize: 11, color: '#ecfdf5', marginTop: 8, textAlign: 'center' },
   mapContainer: { height: 200, borderRadius: 12, overflow: 'hidden', position: 'relative' },
   map: { width: '100%', height: '100%' },
   locationButton: {
@@ -541,8 +770,19 @@ const styles = StyleSheet.create({
     color: '#0f172a',
   },
   textArea: { minHeight: 80, textAlignVertical: 'top' },
-  row: { flexDirection: 'row', gap: 12 },
+  row: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
   inputHalf: { flex: 1 },
+  countryRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#f1f5f9',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+  },
+  countryLabel: { fontSize: 14, fontWeight: '600', color: '#475569' },
+  countryValue: { fontSize: 16, color: '#0f172a' },
   button: {
     backgroundColor: '#059669',
     borderRadius: 12,

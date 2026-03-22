@@ -6,6 +6,7 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { User, Briefcase } from 'lucide-react-native';
+import { AppLogo } from '../../components/AppLogo';
 
 type AuthStackParamList = {
   Login: undefined;
@@ -19,6 +20,7 @@ export default function RegisterScreen() {
 
   return (
     <View style={styles.container}>
+      <AppLogo size={88} style={styles.logo} />
       <Text style={styles.title}>Εγγραφή</Text>
       <Text style={styles.subtitle}>Επίλεξε τον τύπο λογαριασμού</Text>
 
@@ -63,6 +65,7 @@ const styles = StyleSheet.create({
     padding: 24,
     paddingTop: 48,
   },
+  logo: { alignSelf: 'center', marginBottom: 16 },
   title: { fontSize: 28, fontWeight: '700', color: '#0f172a', textAlign: 'center' },
   subtitle: {
     fontSize: 16,

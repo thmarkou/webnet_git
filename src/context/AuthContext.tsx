@@ -12,7 +12,7 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { auth, db } from '../api';
-import type { User, Professional, Service } from '../api/types';
+import type { User, Professional, Service, ProfileDisplayType } from '../api/types';
 
 export interface UserRegistrationData {
   email: string;
@@ -36,7 +36,9 @@ export interface ProfessionalRegistrationData extends UserRegistrationData {
   zip: string;
   city: string;
   country: string;
-  profileImageBase64?: string;
+  /** Άνδρας / Γυναίκα / Εταιρεία — για avatar όταν δεν υπάρχει φωτογραφία */
+  profileDisplayType: ProfileDisplayType;
+  profileImageBase64?: string | null;
   latitude?: number;
   longitude?: number;
   serviceName: string;
@@ -143,20 +145,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       pendingRequests: [],
       businessName: data.businessName,
       vat: data.vat,
-      website: data.website,
-      bio: data.bio,
+      website: data.website ?? '',
+      bio: data.bio ?? '',
       address: data.address,
-      addressNumber: data.addressNumber,
-      area: data.area,
-      zip: data.zip,
+      addressNumber: data.addressNumber ?? '',
+      area: data.area ?? '',
+      zip: data.zip ?? '',
       city: data.city,
-      country: data.country,
-      profileImageBase64: data.profileImageBase64,
+      country: data.country ?? 'Ελλάδα',
+      profileDisplayType: data.profileDisplayType,
+      profileImageBase64:
+        data.profileImageBase64 != null && String(data.profileImageBase64).trim() !== ''
+          ? data.profileImageBase64
+          : null,
       latitude: data.latitude,
       longitude: data.longitude,
       services: service.name ? [service] : [],
       ratingAvg: 0,
       totalReviews: 0,
+      availableToday: false,
     };
 
     await setDoc(doc(db, 'users', firebaseUser.uid), proDoc);

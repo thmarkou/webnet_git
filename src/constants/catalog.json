@@ -1,0 +1,21 @@
+{
+  "cities": [
+    { "label": "Αθήνα", "latitude": 37.9838, "longitude": 23.7275, "country": "Ελλάδα" },
+    { "label": "Θεσσαλονίκη", "latitude": 40.6401, "longitude": 22.9444, "country": "Ελλάδα" },
+    { "label": "Πάτρα", "latitude": 38.2466, "longitude": 21.7346, "country": "Ελλάδα" },
+    { "label": "Ηράκλειο", "latitude": 35.3387, "longitude": 25.1442, "country": "Ελλάδα" },
+    { "label": "Λάρισα", "latitude": 39.639, "longitude": 22.4191, "country": "Ελλάδα" },
+    { "label": "Ιωάννινα", "latitude": 39.6679, "longitude": 20.8504, "country": "Ελλάδα" },
+    { "label": "Νέα Μουδανιά", "latitude": 40.2425, "longitude": 23.285, "country": "Ελλάδα" }
+  ],
+  "professions": [
+    "Υδραυλικός",
+    "Ηλεκτρολόγος",
+    "Developer",
+    "Δικηγόρος",
+    "Λογιστής",
+    "Mobile Developer",
+    "Ιατρός",
+    "Κηπουρός"
+  ]
+}

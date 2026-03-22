@@ -5,11 +5,13 @@
   "scripts": {
     "update-passwords": "node scripts/update-passwords.js",
     "start": "expo start",
+    "start:clear": "expo start --clear",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "clean-install": "rm -rf node_modules package-lock.json && npm install",
-    "sync-brand-assets": "bash scripts/sync-brand-assets.sh"
+    "sync-brand-assets": "bash scripts/sync-brand-assets.sh",
+    "sync-ios-app-icon": "cp assets/icon.png ios/webnetapp/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",

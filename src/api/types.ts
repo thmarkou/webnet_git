@@ -29,6 +29,9 @@ export interface GeoCoordinates {
   longitude: number;
 }
 
+/** Εικονίδιο placeholder όταν δεν ανέβει φωτο — ορίζεται στην εγγραφή επαγγελματία */
+export type ProfileDisplayType = 'male' | 'female' | 'company';
+
 export interface Professional extends User {
   role: 'pro';
   businessName: string;
@@ -43,12 +46,17 @@ export interface Professional extends User {
   city: string;
   country: string;
   profileImage?: string;
-  profileImageBase64?: string;
+  /** null = χωρίς φωτογραφία → εικονίδιο Lucide στο UI */
+  profileImageBase64?: string | null;
+  /** Τύπος προφίλ για placeholder avatar (Άνδρας / Γυναίκα / Εταιρεία) */
+  profileDisplayType?: ProfileDisplayType;
   latitude?: number;
   longitude?: number;
   services: Service[];
   ratingAvg: number;
   totalReviews: number;
+  /** Διαθέσιμος σήμερα (μελλοντικό / χειροκίνητο πεδίο) */
+  availableToday?: boolean;
 }
 
 export type AppointmentStatus = 'pending' | 'confirmed' | 'past';
@@ -63,9 +71,10 @@ export interface Appointment {
 }
 
 export interface Review {
+  id?: string;
   proId: string;
   userId: string;
   stars: number;
   comment: string;
-  timestamp: Date | { seconds: number; nanoseconds: number };
+  timestamp?: Date | { seconds: number; nanoseconds: number };
 }

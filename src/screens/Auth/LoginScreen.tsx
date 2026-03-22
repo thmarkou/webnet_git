@@ -18,8 +18,8 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { LogIn } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
+import { AppLogo } from '../../components/AppLogo';
 import { getLastEmail, setLastEmail } from '../../utils/lastEmail';
 
 type AuthStackParamList = {
@@ -92,7 +92,7 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.content}>
-          <LogIn size={48} color="#2563eb" strokeWidth={2} />
+          <AppLogo size={112} style={styles.logo} />
           <Text style={styles.title}>Σύνδεση</Text>
 
           <TextInput
@@ -199,7 +199,8 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 24 },
   content: { alignItems: 'stretch' },
-  title: { fontSize: 24, fontWeight: '700', color: '#0f172a', marginTop: 12, textAlign: 'center' },
+  logo: { alignSelf: 'center', marginBottom: 4 },
+  title: { fontSize: 24, fontWeight: '700', color: '#0f172a', marginTop: 8, textAlign: 'center' },
   input: {
     backgroundColor: '#fff',
     borderWidth: 1,

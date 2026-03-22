@@ -19,6 +19,8 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { User } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
+import { FormSelect } from '../../components/FormSelect';
+import { CITY_LABELS, PROFESSIONS } from '../../constants/data';
 
 type AuthStackParamList = {
   Login: undefined;
@@ -47,8 +49,19 @@ export default function RegisterUserScreen() {
 
   const handleSubmit = async () => {
     const { firstName, lastName, email, phone, password } = form;
-    if (!firstName.trim() || !lastName.trim() || !email.trim() || !phone.trim() || !password) {
-      Alert.alert('Σφάλμα', 'Συμπλήρωσε τα υποχρεωτικά πεδία: Όνομα, Επώνυμο, Email, Τηλέφωνο, Κωδικός.');
+    if (
+      !firstName.trim() ||
+      !lastName.trim() ||
+      !email.trim() ||
+      !phone.trim() ||
+      !password ||
+      !form.profession ||
+      !form.location
+    ) {
+      Alert.alert(
+        'Σφάλμα',
+        'Συμπλήρωσε: Όνομα, Επώνυμο, Email, Τηλέφωνο, Κωδικός, Επάγγελμα (επιλογή), Πόλη (επιλογή).'
+      );
       return;
     }
 
@@ -60,8 +73,8 @@ export default function RegisterUserScreen() {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
         phone: phone.trim(),
-        profession: form.profession.trim(),
-        location: form.location.trim(),
+        profession: form.profession,
+        location: form.location,
       });
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Σφάλμα εγγραφής';
@@ -124,21 +137,21 @@ export default function RegisterUserScreen() {
             keyboardType="phone-pad"
             editable={!loading}
           />
-          <TextInput
-            style={styles.input}
-            placeholder="Επάγγελμα"
-            placeholderTextColor="#94a3b8"
+          <FormSelect
+            label="Επάγγελμα *"
             value={form.profession}
-            onChangeText={(v) => updateField('profession', v)}
-            editable={!loading}
+            options={PROFESSIONS}
+            onChange={(v) => updateField('profession', v)}
+            placeholder="Επίλεξε επάγγελμα"
+            disabled={loading}
           />
-          <TextInput
-            style={styles.input}
-            placeholder="Τοποθεσία"
-            placeholderTextColor="#94a3b8"
+          <FormSelect
+            label="Πόλη *"
             value={form.location}
-            onChangeText={(v) => updateField('location', v)}
-            editable={!loading}
+            options={CITY_LABELS}
+            onChange={(v) => updateField('location', v)}
+            placeholder="Επίλεξε πόλη"
+            disabled={loading}
           />
           <TextInput
             style={styles.input}

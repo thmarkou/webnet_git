@@ -1,54 +1,151 @@
 /**
- * Search screen - list of professionals with filters, profile images, distance
+ * Search screen — φίλτρα (Modal), Haversine απόσταση (GPS χρήστη ↔ lat/lng Firestore)
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useLayoutEffect } from 'react';
 import {
   View,
   Text,
   FlatList,
-  TextInput,
   StyleSheet,
   TouchableOpacity,
   ActivityIndicator,
   Image,
+  Switch,
+  ScrollView,
+  Modal,
 } from 'react-native';
-import { useNavigation } from '@react-navigation/native';
+import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { collection, query, where, getDocs } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../api';
-import type { Professional } from '../../api/types';
-import { Search } from 'lucide-react-native';
+import type { Professional, Review } from '../../api/types';
+import { Star, SlidersHorizontal } from 'lucide-react-native';
 import { haversineDistance } from '../../utils/haversine';
 import { getProfileImageUri } from '../../utils/imageUtils';
+import {
+  getProfessionalAvatarKind,
+  ProfessionalAvatarIcon,
+} from '../../assets/avatars';
+import { formatProfessionalAddress, minServicePrice } from '../../utils/proSearch';
 import type { SearchStackParamList } from '../../navigation/SearchStack';
 import * as Location from 'expo-location';
+import { useAuth } from '../../context/AuthContext';
+import { FormSelect } from '../../components/FormSelect';
+import { CITY_LABELS, PROFESSIONS } from '../../constants/data';
+import {
+  RADIUS_FILTER_OPTIONS,
+  PRICE_SORT_OPTIONS,
+  MIN_RATING_OPTIONS,
+  type RadiusFilterKey,
+  type PriceSortKey,
+  type MinRatingKey,
+} from '../../constants/searchFilters';
+
+/** Εξασφαλίζει αριθμητικό lat/lng από Firestore (αποφυγή λάθους απόστασης αν ήρθαν ως string). */
+function toFiniteCoord(value: unknown): number | undefined {
+  if (value == null) return undefined;
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
+
+function mapDocToProfessional(
+  id: string,
+  data: Record<string, unknown>
+): Professional {
+  const lat = toFiniteCoord(data.latitude);
+  const lng = toFiniteCoord(data.longitude);
+  return {
+    uid: id,
+    ...data,
+    latitude: lat,
+    longitude: lng,
+  } as Professional;
+}
 
 export default function SearchScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<SearchStackParamList>>();
+  const { user } = useAuth();
   const [professionals, setProfessionals] = useState<Professional[]>([]);
-  const [filtered, setFiltered] = useState<Professional[]>([]);
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [myFriendIds, setMyFriendIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [userLocation, setUserLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [filterProfession, setFilterProfession] = useState('');
   const [filterCity, setFilterCity] = useState('');
+  const [radiusKey, setRadiusKey] = useState<RadiusFilterKey>('all');
+  const [priceSort, setPriceSort] = useState<PriceSortKey>('none');
+  const [minRatingKey, setMinRatingKey] = useState<MinRatingKey>('any');
+  const [onlyAvailableToday, setOnlyAvailableToday] = useState(false);
+  const [filterModalVisible, setFilterModalVisible] = useState(false);
+
+  const refreshUserGpsLocation = useCallback(async () => {
+    const { status } = await Location.requestForegroundPermissionsAsync();
+    if (status !== 'granted') {
+      setUserLocation(null);
+      return;
+    }
+    try {
+      const loc = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.BestForNavigation,
+      });
+      setUserLocation({
+        latitude: loc.coords.latitude,
+        longitude: loc.coords.longitude,
+      });
+    } catch {
+      // Διατηρούμε προηγούμενη θέση αν υπάρχει
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      headerRight: () => (
+        <TouchableOpacity
+          onPress={() => setFilterModalVisible(true)}
+          style={styles.headerFilterBtn}
+          accessibilityLabel="Φίλτρα αναζήτησης"
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+        >
+          <SlidersHorizontal size={22} color="#2563eb" />
+        </TouchableOpacity>
+      ),
+    });
+  }, [navigation]);
+
+  const loadReviews = useCallback(async () => {
+    try {
+      const snap = await getDocs(collection(db, 'reviews'));
+      setReviews(
+        snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            proId: data.proId,
+            userId: data.userId,
+            stars: data.stars,
+            comment: data.comment ?? '',
+            timestamp: data.timestamp,
+          } as Review;
+        })
+      );
+    } catch {
+      setReviews([]);
+    }
+  }, []);
 
   useEffect(() => {
     const fetchProfessionals = async () => {
       try {
-        const q = query(
-          collection(db, 'users'),
-          where('role', '==', 'pro')
-        );
+        const q = query(collection(db, 'users'), where('role', '==', 'pro'));
         const snapshot = await getDocs(q);
-        const pros = snapshot.docs.map((d) => ({
-          uid: d.id,
-          ...d.data(),
-        })) as Professional[];
+        const pros = snapshot.docs.map((d) => mapDocToProfessional(d.id, d.data() as Record<string, unknown>));
         setProfessionals(pros);
-        setFiltered(pros);
-      } catch (err) {
+      } catch {
         setProfessionals([]);
-        setFiltered([]);
       } finally {
         setLoading(false);
       }
@@ -56,58 +153,135 @@ export default function SearchScreen() {
     fetchProfessionals();
   }, []);
 
-  useEffect(() => {
-    (async () => {
-      const { status } = await Location.requestForegroundPermissionsAsync();
-      if (status === 'granted') {
-        try {
-          const loc = await Location.getCurrentPositionAsync({});
-          setUserLocation({
-            latitude: loc.coords.latitude,
-            longitude: loc.coords.longitude,
-          });
-        } catch {
-          // ignore
-        }
+  useFocusEffect(
+    useCallback(() => {
+      void refreshUserGpsLocation();
+      loadReviews();
+      if (!user?.uid) {
+        setMyFriendIds([]);
+        return;
       }
-    })();
-  }, []);
+      getDoc(doc(db, 'users', user.uid))
+        .then((snap) => {
+          setMyFriendIds((snap.data()?.friends ?? []) as string[]);
+        })
+        .catch(() => setMyFriendIds([]));
+    }, [user?.uid, loadReviews, refreshUserGpsLocation])
+  );
 
-  useEffect(() => {
+  const friendBoostedProIds = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of reviews) {
+      if (myFriendIds.includes(r.userId) && r.stars >= 4) {
+        s.add(r.proId);
+      }
+    }
+    return s;
+  }, [reviews, myFriendIds]);
+
+  const distanceKm = useCallback(
+    (pro: Professional): number => {
+      if (!userLocation || pro.latitude == null || pro.longitude == null) {
+        return Number.POSITIVE_INFINITY;
+      }
+      return haversineDistance(
+        userLocation.latitude,
+        userLocation.longitude,
+        pro.latitude,
+        pro.longitude
+      );
+    },
+    [userLocation]
+  );
+
+  const filtered = useMemo(() => {
     let result = professionals;
     if (filterProfession.trim()) {
-      const p = filterProfession.trim().toLowerCase();
-      result = result.filter(
-        (pro) => pro.profession?.toLowerCase().includes(p)
-      );
+      const p = filterProfession.trim();
+      result = result.filter((pro) => pro.profession === p);
     }
     if (filterCity.trim()) {
-      const c = filterCity.trim().toLowerCase();
-      result = result.filter(
-        (pro) => pro.city?.toLowerCase().includes(c)
-      );
+      const c = filterCity.trim();
+      result = result.filter((pro) => pro.city === c);
     }
-    setFiltered(result);
-  }, [filterProfession, filterCity, professionals]);
+
+    const radiusOpt = RADIUS_FILTER_OPTIONS.find((o) => o.key === radiusKey);
+    const maxKm = radiusOpt?.km;
+    if (maxKm != null) {
+      if (userLocation) {
+        result = result.filter((pro) => {
+          if (pro.latitude == null || pro.longitude == null) return false;
+          return distanceKm(pro) <= maxKm;
+        });
+      }
+    }
+
+    if (minRatingKey === '4') {
+      result = result.filter((pro) => (pro.ratingAvg ?? 0) >= 4);
+    }
+
+    if (onlyAvailableToday) {
+      result = result.filter((pro) => pro.availableToday === true);
+    }
+
+    return result;
+  }, [
+    professionals,
+    filterProfession,
+    filterCity,
+    radiusKey,
+    userLocation,
+    minRatingKey,
+    onlyAvailableToday,
+    distanceKm,
+  ]);
+
+  const sortedFiltered = useMemo(() => {
+    const list = [...filtered];
+    const comparePriceAsc = (a: Professional, b: Professional) => {
+      const pa = minServicePrice(a);
+      const pb = minServicePrice(b);
+      const ia = pa === Number.POSITIVE_INFINITY;
+      const ib = pb === Number.POSITIVE_INFINITY;
+      if (ia && ib) return 0;
+      if (ia) return 1;
+      if (ib) return -1;
+      return pa - pb;
+    };
+
+    list.sort((a, b) => {
+      const boostA = friendBoostedProIds.has(a.uid) ? 1 : 0;
+      const boostB = friendBoostedProIds.has(b.uid) ? 1 : 0;
+      if (boostA !== boostB) return boostB - boostA;
+
+      if (priceSort === 'asc') return comparePriceAsc(a, b);
+      if (priceSort === 'desc') return comparePriceAsc(b, a);
+
+      return distanceKm(a) - distanceKm(b);
+    });
+    return list;
+  }, [filtered, friendBoostedProIds, priceSort, distanceKm]);
 
   const getDistance = (pro: Professional): string | null => {
     if (!userLocation || pro.latitude == null || pro.longitude == null) return null;
-    const km = haversineDistance(
-      userLocation.latitude,
-      userLocation.longitude,
-      pro.latitude,
-      pro.longitude
-    );
+    const km = distanceKm(pro);
+    if (km === Number.POSITIVE_INFINITY) return null;
     if (km < 1) return `${Math.round(km * 1000)} m away`;
     return `${km.toFixed(1)} km away`;
   };
 
+  const radiusNeedsLocation =
+    radiusKey !== 'all' && !userLocation;
+
   const renderItem = ({ item }: { item: Professional }) => {
     const distance = getDistance(item);
     const imageUri = getProfileImageUri(item);
+    const avatarKind = getProfessionalAvatarKind(item);
+    const boosted = friendBoostedProIds.has(item.uid);
+    const minP = minServicePrice(item);
     return (
       <TouchableOpacity
-        style={styles.card}
+        style={[styles.card, boosted && styles.cardBoosted]}
         activeOpacity={0.8}
         onPress={() => navigation.navigate('ProfessionalDetails', { professional: item })}
       >
@@ -115,24 +289,29 @@ export default function SearchScreen() {
           {imageUri ? (
             <Image source={{ uri: imageUri }} style={styles.avatar} />
           ) : (
-            <View style={styles.avatarPlaceholder}>
-              <Text style={styles.avatarText}>
-                {item.firstName?.[0]}{item.lastName?.[0]}
-              </Text>
+            <View style={styles.avatarPlaceholder} accessibilityLabel="Εικονίδιο προφίλ">
+              <ProfessionalAvatarIcon kind={avatarKind} size={26} color="#fff" />
             </View>
           )}
           <View style={styles.cardContent}>
+            {boosted && (
+              <View style={styles.boostBadge}>
+                <Star size={14} color="#ca8a04" fill="#facc15" />
+                <Text style={styles.boostText}>Πρόταση φίλου</Text>
+              </View>
+            )}
             <Text style={styles.cardTitle}>
               {item.businessName || `${item.firstName} ${item.lastName}`}
             </Text>
             <Text style={styles.cardProfession}>{item.profession || '—'}</Text>
-            <Text style={styles.cardCity}>{item.city || '—'}</Text>
-            {distance && (
-              <Text style={styles.cardDistance}>📍 {distance}</Text>
+            <Text style={styles.cardFullAddress}>{formatProfessionalAddress(item)}</Text>
+            {item.availableToday === true && (
+              <Text style={styles.availBadge}>Διαθέσιμος σήμερα</Text>
             )}
+            {distance && <Text style={styles.cardDistance}>📍 {distance}</Text>}
             {item.services?.length > 0 && (
               <Text style={styles.cardService}>
-                {item.services[0].name} — €{item.services[0].price}
+                Από €{minP === Number.POSITIVE_INFINITY ? '—' : minP} · {item.services[0].name}
               </Text>
             )}
           </View>
@@ -140,6 +319,80 @@ export default function SearchScreen() {
       </TouchableOpacity>
     );
   };
+
+  const filtersModalContent = (
+    <ScrollView
+      style={styles.modalScroll}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator
+    >
+      <View style={styles.filtersInner}>
+        <FormSelect
+          label="Επάγγελμα"
+          value={filterProfession}
+          options={PROFESSIONS}
+          onChange={setFilterProfession}
+          placeholder="Όλα τα επαγγέλματα"
+          allowEmpty
+          emptyLabel="Όλα τα επαγγέλματα"
+        />
+        <FormSelect
+          label="Πόλη"
+          value={filterCity}
+          options={CITY_LABELS}
+          onChange={setFilterCity}
+          placeholder="Όλες οι πόλεις"
+          allowEmpty
+          emptyLabel="Όλες οι πόλεις"
+        />
+        <FormSelect
+          label="Ακτίνα από εμένα"
+          value={RADIUS_FILTER_OPTIONS.find((o) => o.key === radiusKey)?.label ?? ''}
+          options={RADIUS_FILTER_OPTIONS.map((o) => o.label)}
+          onChange={(label) => {
+            const o = RADIUS_FILTER_OPTIONS.find((x) => x.label === label);
+            if (o) setRadiusKey(o.key);
+          }}
+          placeholder="Όλες οι αποστάσεις"
+        />
+        {radiusNeedsLocation && (
+          <Text style={styles.warnText}>
+            Ενεργοποίησε την τοποθεσία για φίλτρο ακτίνας (Ρυθμίσεις → τοποθεσία). Η απόσταση
+            υπολογίζεται από το τρέχον GPS σου και τα lat/lng του επαγγελματία στη βάση.
+          </Text>
+        )}
+        <FormSelect
+          label="Ταξινόμηση τιμής"
+          value={PRICE_SORT_OPTIONS.find((o) => o.key === priceSort)?.label ?? ''}
+          options={PRICE_SORT_OPTIONS.map((o) => o.label)}
+          onChange={(label) => {
+            const o = PRICE_SORT_OPTIONS.find((x) => x.label === label);
+            if (o) setPriceSort(o.key);
+          }}
+          placeholder="Χωρίς ταξινόμηση τιμής"
+        />
+        <FormSelect
+          label="Βαθμολογία"
+          value={MIN_RATING_OPTIONS.find((o) => o.key === minRatingKey)?.label ?? ''}
+          options={MIN_RATING_OPTIONS.map((o) => o.label)}
+          onChange={(label) => {
+            const o = MIN_RATING_OPTIONS.find((x) => x.label === label);
+            if (o) setMinRatingKey(o.key);
+          }}
+          placeholder="Όλες οι βαθμολογίες"
+        />
+        <View style={styles.switchRow}>
+          <Text style={styles.switchLabel}>Μόνο διαθέσιμοι σήμερα</Text>
+          <Switch
+            value={onlyAvailableToday}
+            onValueChange={setOnlyAvailableToday}
+            trackColor={{ false: '#cbd5e1', true: '#93c5fd' }}
+            thumbColor={onlyAvailableToday ? '#2563eb' : '#f4f4f5'}
+          />
+        </View>
+      </View>
+    </ScrollView>
+  );
 
   if (loading) {
     return (
@@ -151,38 +404,31 @@ export default function SearchScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.filters}>
-        <View style={styles.searchRow}>
-          <Search size={20} color="#64748b" />
-          <TextInput
-            style={styles.filterInput}
-            placeholder="Επάγγελμα"
-            placeholderTextColor="#94a3b8"
-            value={filterProfession}
-            onChangeText={setFilterProfession}
-          />
-        </View>
-        <View style={styles.searchRow}>
-          <Search size={20} color="#64748b" />
-          <TextInput
-            style={styles.filterInput}
-            placeholder="Πόλη"
-            placeholderTextColor="#94a3b8"
-            value={filterCity}
-            onChangeText={setFilterCity}
-          />
-        </View>
-      </View>
-
       <FlatList
-        data={filtered}
+        data={sortedFiltered}
         keyExtractor={(item) => item.uid}
         renderItem={renderItem}
         contentContainerStyle={styles.list}
-        ListEmptyComponent={
-          <Text style={styles.empty}>Δεν βρέθηκαν επαγγελματίες</Text>
-        }
+        ListEmptyComponent={<Text style={styles.empty}>Δεν βρέθηκαν επαγγελματίες</Text>}
+        keyboardShouldPersistTaps="handled"
       />
+
+      <Modal
+        visible={filterModalVisible}
+        animationType="slide"
+        presentationStyle="pageSheet"
+        onRequestClose={() => setFilterModalVisible(false)}
+      >
+        <View style={styles.modalSheet}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Φίλτρα</Text>
+            <TouchableOpacity onPress={() => setFilterModalVisible(false)} hitSlop={12}>
+              <Text style={styles.modalDone}>Έτοιμο</Text>
+            </TouchableOpacity>
+          </View>
+          {filtersModalContent}
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -190,47 +436,65 @@ export default function SearchScreen() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#f8fafc' },
   centered: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  filters: {
-    padding: 16,
-    gap: 12,
-    backgroundColor: '#fff',
+  headerFilterBtn: { marginRight: 16, padding: 4 },
+  modalSheet: { flex: 1, backgroundColor: '#fff' },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 14,
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
   },
-  searchRow: {
+  modalTitle: { fontSize: 18, fontWeight: '700', color: '#0f172a' },
+  modalDone: { fontSize: 16, fontWeight: '600', color: '#2563eb' },
+  modalScroll: { flex: 1 },
+  filtersInner: { padding: 16, gap: 14, paddingBottom: 32 },
+  warnText: { fontSize: 12, color: '#b45309', marginTop: -8 },
+  switchRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#f1f5f9',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    gap: 8,
+    justifyContent: 'space-between',
+    paddingVertical: 8,
   },
-  filterInput: { flex: 1, paddingVertical: 12, fontSize: 16, color: '#0f172a' },
-  list: { padding: 16, paddingBottom: 32 },
+  switchLabel: { fontSize: 14, fontWeight: '600', color: '#475569', flex: 1 },
+  list: { padding: 12, paddingBottom: 28 },
   card: {
     backgroundColor: '#fff',
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#e2e8f0',
   },
-  cardRow: { flexDirection: 'row', gap: 16 },
-  avatar: { width: 56, height: 56, borderRadius: 28 },
+  cardBoosted: {
+    borderColor: '#facc15',
+    backgroundColor: '#fffbeb',
+  },
+  cardRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
+  avatar: { width: 48, height: 48, borderRadius: 24 },
   avatarPlaceholder: {
-    width: 56,
-    height: 56,
-    borderRadius: 28,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: '#059669',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  avatarText: { fontSize: 18, fontWeight: '700', color: '#fff' },
   cardContent: { flex: 1 },
-  cardTitle: { fontSize: 18, fontWeight: '600', color: '#0f172a' },
-  cardProfession: { fontSize: 14, color: '#059669', marginTop: 4 },
-  cardCity: { fontSize: 14, color: '#64748b', marginTop: 2 },
-  cardDistance: { fontSize: 13, color: '#475569', marginTop: 2 },
-  cardService: { fontSize: 13, color: '#475569', marginTop: 6 },
+  boostBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 4,
+  },
+  boostText: { fontSize: 11, fontWeight: '600', color: '#a16207' },
+  cardTitle: { fontSize: 16, fontWeight: '600', color: '#0f172a' },
+  cardProfession: { fontSize: 13, color: '#059669', marginTop: 2 },
+  cardFullAddress: { fontSize: 12, color: '#475569', marginTop: 2, lineHeight: 16 },
+  availBadge: { fontSize: 11, fontWeight: '600', color: '#059669', marginTop: 2 },
+  cardDistance: { fontSize: 17, fontWeight: '700', color: '#0f172a', marginTop: 4 },
+  cardService: { fontSize: 12, color: '#475569', marginTop: 4 },
   empty: { textAlign: 'center', color: '#64748b', marginTop: 32, fontSize: 16 },
 });

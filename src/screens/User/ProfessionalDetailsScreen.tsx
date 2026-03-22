@@ -1,7 +1,8 @@
 /**
  * Professional details - profile, map, services, Contact modal
+ * Χάρτης: lat/lng απευθείας από το Firestore (όχι τυχαία τιμή).
  */
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -17,33 +18,90 @@ import { useRoute } from '@react-navigation/native';
 import type { RouteProp } from '@react-navigation/native';
 import MapView, { Marker } from 'react-native-maps';
 import { MapPin, Phone, Mail, MessageCircle } from 'lucide-react-native';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../api';
 import type { Professional } from '../../api/types';
 import { getProfileImageUri } from '../../utils/imageUtils';
+import {
+  getProfessionalAvatarKind,
+  ProfessionalAvatarIcon,
+} from '../../assets/avatars';
+
+function toCoord(v: unknown): number | undefined {
+  if (v == null) return undefined;
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  }
+  return undefined;
+}
 
 export default function ProfessionalDetailsScreen() {
   const route = useRoute<RouteProp<{ ProfessionalDetails: { professional: Professional } }, 'ProfessionalDetails'>>();
-  const { professional } = route.params;
+  const { professional: routePro } = route.params;
+  const [professional, setProfessional] = useState<Professional>(routePro);
   const [contactModalVisible, setContactModalVisible] = useState(false);
 
-  const imageUri = getProfileImageUri(professional);
-  const hasCoords = professional.latitude != null && professional.longitude != null;
-  const region = hasCoords
-    ? {
-        latitude: professional.latitude!,
-        longitude: professional.longitude!,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', routePro.uid));
+        if (!snap.exists() || cancelled) return;
+        const d = snap.data() as Record<string, unknown>;
+        const lat = toCoord(d.latitude);
+        const lng = toCoord(d.longitude);
+        // Μόνο συντεταγμένες από Firestore — αποφεύγουμε spread όλου του doc (Timestamps κ.λπ.)
+        setProfessional((prev) => ({
+          ...prev,
+          latitude: lat ?? prev.latitude,
+          longitude: lng ?? prev.longitude,
+        }));
+      } catch {
+        /* κρατάμε route params */
       }
-    : {
-        latitude: 37.9838,
-        longitude: 23.7275,
-        latitudeDelta: 0.1,
-        longitudeDelta: 0.1,
-      };
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [routePro.uid]);
+
+  const imageUri = getProfileImageUri(professional);
+  const avatarKind = getProfessionalAvatarKind(professional);
+
+  const pinLatLng = useMemo(() => {
+    const lat =
+      professional.latitude != null ? Number(professional.latitude) : NaN;
+    const lng =
+      professional.longitude != null ? Number(professional.longitude) : NaN;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { latitude: lat, longitude: lng };
+  }, [professional.latitude, professional.longitude]);
+
+  const hasCoords = pinLatLng != null;
+
+  const initialMapRegion = useMemo(
+    () =>
+      pinLatLng
+        ? {
+            latitude: pinLatLng.latitude,
+            longitude: pinLatLng.longitude,
+            latitudeDelta: 0.005,
+            longitudeDelta: 0.005,
+          }
+        : {
+            latitude: 37.9838,
+            longitude: 23.7275,
+            latitudeDelta: 0.1,
+            longitudeDelta: 0.1,
+          },
+    [pinLatLng]
+  );
 
   const openInMaps = () => {
-    if (hasCoords) {
-      const url = `https://www.google.com/maps/dir/?api=1&destination=${professional.latitude},${professional.longitude}`;
+    if (pinLatLng) {
+      const url = `https://www.google.com/maps/dir/?api=1&destination=${pinLatLng.latitude},${pinLatLng.longitude}`;
       Linking.openURL(url);
     }
   };
@@ -72,10 +130,8 @@ export default function ProfessionalDetailsScreen() {
         {imageUri ? (
           <Image source={{ uri: imageUri }} style={styles.avatar} />
         ) : (
-          <View style={styles.avatarPlaceholder}>
-            <Text style={styles.avatarText}>
-              {professional.firstName?.[0]}{professional.lastName?.[0]}
-            </Text>
+          <View style={styles.avatarPlaceholder} accessibilityLabel="Εικονίδιο προφίλ">
+            <ProfessionalAvatarIcon kind={avatarKind} size={44} color="#fff" />
           </View>
         )}
         <Text style={styles.title}>
@@ -123,8 +179,22 @@ export default function ProfessionalDetailsScreen() {
         {hasCoords ? (
           <>
             <View style={styles.mapContainer}>
-              <MapView style={styles.map} region={region} scrollEnabled={false}>
-                <Marker coordinate={{ latitude: professional.latitude!, longitude: professional.longitude! }} />
+              <MapView
+                key={`${professional.uid}-${pinLatLng.latitude}-${pinLatLng.longitude}`}
+                style={styles.map}
+                initialRegion={initialMapRegion}
+                scrollEnabled={false}
+                zoomEnabled={false}
+                rotateEnabled={false}
+                pitchEnabled={false}
+              >
+                <Marker
+                  coordinate={{
+                    latitude: pinLatLng.latitude,
+                    longitude: pinLatLng.longitude,
+                  }}
+                  title={professional.businessName || `${professional.firstName} ${professional.lastName}`}
+                />
               </MapView>
             </View>
             <TouchableOpacity style={styles.mapButton} onPress={openInMaps}>
@@ -201,7 +271,6 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  avatarText: { fontSize: 32, fontWeight: '700', color: '#fff' },
   title: { fontSize: 22, fontWeight: '700', color: '#0f172a', marginTop: 12 },
   profession: { fontSize: 16, color: '#059669', marginTop: 4 },
   contactButton: {

@@ -23,6 +23,12 @@ npx expo start
 | `npm run ios` / `android` | Native run |
 | `npm run sync-brand-assets` | Από `assets/webnet.jpeg` → ενημέρωση icon/splash/favicon (macOS) |
 
+## Logo & εικονίδιο iPhone
+
+**Σημαντικό:** Με **Expo Go** το εικονίδιο στην αρχική οθόνη είναι πάντα του Expo — για δικό σου εικονίδιο χρειάζεται `npx expo run:ios` ή build από Xcode. Λεπτομέρειες: **`BRANDING.md`**.
+
 ## Docs
 
-Βλ. `FIREBASE_SETUP.md`, `XCODE_SETUP.md`, `PASSWORD_UPDATE.md`, `CHANGELOG_2025-03-18.md`.
+Βλ. `BRANDING.md`, `FIREBASE_SETUP.md`, `XCODE_SETUP.md`, `PASSWORD_UPDATE.md`, `SEED_FIRESTORE.md`.
+
+**Changelog:** `CHANGELOG_2026-03-18.md` (τελευταία μεγάλη ενημέρωση) · `CHANGELOG_2025-03-18.md` (αρχική σύνοψη).
