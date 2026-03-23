@@ -6,6 +6,7 @@ import React from 'react';
 import { createStackNavigator } from '@react-navigation/stack';
 import { MainTabNavigator } from './MainTabNavigator';
 import AdminDashboardScreen from '../screens/AdminDashboardScreen';
+import AdminAddProfessionalScreen from '../screens/AdminAddProfessionalScreen';
 import SuperAdminDashboard from '../screens/SuperAdminDashboard';
 import SubscriptionScreen from '../screens/SubscriptionScreen';
 import PaymentScreen from '../screens/Professional/PaymentScreen';
@@ -16,6 +17,7 @@ import { isProSubscriptionBlocked } from '../utils/subscription';
 export type MainNavigatorParamList = {
   MainTabs: undefined;
   AdminDashboard: undefined;
+  AdminAddProfessional: undefined;
   SuperAdminDashboard: undefined;
   SubscriptionRequired: undefined;
   PaymentRequired: undefined;
@@ -52,6 +54,16 @@ export function MainNavigator() {
             options={{
               headerShown: true,
               title: 'Admin',
+              headerBackTitle: 'Πίσω',
+              headerTintColor: '#0f172a',
+            }}
+          />
+          <Stack.Screen
+            name="AdminAddProfessional"
+            component={AdminAddProfessionalScreen}
+            options={{
+              headerShown: true,
+              title: 'Νέος επαγγελματίας',
               headerBackTitle: 'Πίσω',
               headerTintColor: '#0f172a',
             }}

@@ -25,6 +25,7 @@ import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { useAuth } from '../context/AuthContext';
 import { FormSelect } from '../components/FormSelect';
+import { professionDisplayForStored } from '../utils/professionDisplay';
 import { matchCityFromGeocode } from '../constants/data';
 import { useFirestoreCatalog } from '../hooks/useFirestoreCatalog';
 import type { ProfileDisplayType, ServicePriceBasis } from '../api/types';
@@ -631,6 +632,7 @@ export default function RegisterProfessionalScreen() {
             onChange={(v) => updateField('profession', v)}
             placeholder="Επίλεξε επάγγελμα"
             disabled={loading}
+            getOptionLabel={(v) => professionDisplayForStored(v).label}
           />
           <TextInput
             style={styles.input}

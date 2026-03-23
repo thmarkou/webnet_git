@@ -20,6 +20,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { User } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
 import { FormSelect } from '../../components/FormSelect';
+import { professionDisplayForStored } from '../../utils/professionDisplay';
 import { useFirestoreCatalog } from '../../hooks/useFirestoreCatalog';
 
 type AuthStackParamList = {
@@ -145,6 +146,7 @@ export default function RegisterUserScreen() {
             onChange={(v) => updateField('profession', v)}
             placeholder="Επίλεξε επάγγελμα"
             disabled={loading}
+            getOptionLabel={(v) => professionDisplayForStored(v).label}
           />
           <FormSelect
             label="Πόλη *"

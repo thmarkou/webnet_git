@@ -12,10 +12,11 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, Shield, Trash2 } from 'lucide-react-native';
+import { LogOut, Shield, Trash2, UserPlus } from 'lucide-react-native';
 import { AppUiBuildRibbon } from '../components/AppUiBuildRibbon';
 import { navigateToAdminDashboard } from '../utils/navigateToAdminDashboard';
 import { navigateToSuperAdminDashboard } from '../utils/navigateToSuperAdminDashboard';
+import { navigateToAdminAddProfessional } from '../utils/navigateToAdminAddProfessional';
 import { Crown } from 'lucide-react-native';
 import { db } from '../api';
 import { resetFirestoreToCrystal } from '../api/resetFirestoreToCrystal';
@@ -34,6 +35,15 @@ function SuperAdminButton({ onPress }: { onPress: () => void }) {
     <TouchableOpacity style={styles.superAdminButton} onPress={onPress}>
       <Crown size={20} color="#5b21b6" />
       <Text style={styles.superAdminButtonText}>Super Admin</Text>
+    </TouchableOpacity>
+  );
+}
+
+function AddProfessionalButton({ onPress }: { onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.addProButton} onPress={onPress}>
+      <UserPlus size={20} color="#14532d" />
+      <Text style={styles.addProButtonText}>Προσθήκη επαγγελματία (χωρίς νέο login)</Text>
     </TouchableOpacity>
   );
 }
@@ -135,7 +145,10 @@ export default function SettingsScreen() {
         </>
       ) : null}
       {showAdmin ? (
-        <AdminButton onPress={() => navigateToAdminDashboard(navigation)} />
+        <>
+          <AdminButton onPress={() => navigateToAdminDashboard(navigation)} />
+          <AddProfessionalButton onPress={() => navigateToAdminAddProfessional(navigation)} />
+        </>
       ) : (
         <Text style={styles.adminHint}>
           Admin: Super Admin / Tenant Admin (Firestore tenants) ή legacy EXPO_PUBLIC_ADMIN_EMAIL.
@@ -166,6 +179,17 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   adminButtonText: { fontSize: 15, fontWeight: '700', color: '#1e3a8a' },
+  addProButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#dcfce7',
+    borderRadius: 12,
+    paddingVertical: 14,
+    marginBottom: 16,
+  },
+  addProButtonText: { fontSize: 15, fontWeight: '700', color: '#14532d' },
   superAdminButton: {
     flexDirection: 'row',
     alignItems: 'center',

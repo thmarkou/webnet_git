@@ -67,7 +67,7 @@ export function useFirestoreCatalog() {
           .sort((a, b) => a.label.localeCompare(b.label, 'el'));
         setCities(list);
       } else {
-        setCities(hasTenantDataAccess ? [] : [...CITIES]);
+        setCities([]);
       }
 
       if (profSnap && !profSnap.empty) {
@@ -81,11 +81,16 @@ export function useFirestoreCatalog() {
             .sort((a, b) => a.localeCompare(b, 'el'))
         );
       } else {
-        setProfessions(hasTenantDataAccess ? [] : [...PROFESSIONS]);
+        setProfessions([]);
       }
     } catch {
-      setCities(!user ? [...CITIES] : []);
-      setProfessions(!user ? [...PROFESSIONS] : []);
+      if (!user) {
+        setCities([...CITIES]);
+        setProfessions([...PROFESSIONS]);
+      } else {
+        setCities([]);
+        setProfessions([]);
+      }
     } finally {
       setLoading(false);
     }

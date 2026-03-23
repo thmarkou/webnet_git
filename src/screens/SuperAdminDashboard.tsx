@@ -55,6 +55,7 @@ export default function SuperAdminDashboard() {
 
   const [assignEmail, setAssignEmail] = useState('');
   const [assignTenantId, setAssignTenantId] = useState('');
+  const [stepsGuideOpen, setStepsGuideOpen] = useState(true);
 
   const refreshSuperEmails = useCallback(async () => {
     try {
@@ -289,6 +290,57 @@ export default function SuperAdminDashboard() {
 
       {loading ? <ActivityIndicator style={{ marginVertical: 12 }} color="#7c3aed" /> : null}
 
+      <View style={[styles.guideCard, tenants.length === 0 && styles.guideCardUrgent]}>
+        <TouchableOpacity
+          style={styles.guideHeader}
+          onPress={() => setStepsGuideOpen((o) => !o)}
+          accessibilityRole="button"
+        >
+          <Text style={styles.guideTitle}>Τι να κάνω τώρα; (βήμα-βήμα)</Text>
+          <Text style={styles.guideToggle}>{stepsGuideOpen ? '▼' : '▶'}</Text>
+        </TouchableOpacity>
+        {tenants.length === 0 ? (
+          <Text style={styles.guideUrgentLine}>
+            Βήμα 1: Δημιούργησε έναν tenant παρακάτω — χωρίς αυτό, η εφαρμογή δεν έχει «οργάνωση» για δεδομένα.
+          </Text>
+        ) : null}
+        {stepsGuideOpen ? (
+          <View style={styles.guideBody}>
+            <Text style={styles.guideStep}>
+              <Text style={styles.guideNum}>1. </Text>
+              <Text style={styles.guideBold}>Tenant (υποχρεωτικό)</Text>
+              {'\n'}
+              Στην ενότητα «Νέος tenant», βάλε ένα εμφανιζόμενο όνομα (π.χ. «Οργάνωση μου») και στο «Admin email»
+              το email του διαχειριστή αυτού του tenant — για πρώτη φορά μπορείς να βάλεις το δικό σου (
+              {user?.email ?? '…'}). Πάτα «Δημιουργία tenant». Μετά θα εμφανιστεί στη λίστα «Ενεργοί tenants» με
+              δικό του tenantId.
+            </Text>
+            <Text style={styles.guideStep}>
+              <Text style={styles.guideNum}>2. </Text>
+              <Text style={styles.guideBold}>Πόλεις & επαγγέλματα</Text>
+              {'\n'}
+              Άνοιξε Ρυθμίσεις → Admin Dashboard. Αν είσαι Super Admin, επίλεξε τον tenant από τη λίστα. Γέμισε
+              πόλεις και επαγγέλματα (ξεχωριστό κουμπί merge σε κάθε καρτέλα) ώστε οι φόρμες εγγραφής να έχουν
+              επιλογές.
+            </Text>
+            <Text style={styles.guideStep}>
+              <Text style={styles.guideNum}>3. </Text>
+              <Text style={styles.guideBold}>Άλλοι χρήστες</Text>
+              {'\n'}
+              Μετά την εγγραφή τους στο app, στην ενότητα «Ανάθεση tenant» βάλε το email τους και το ίδιο tenantId
+              που βλέπεις πάνω στη λίστα tenants — ώστε να βλέπουν τα σωστά δεδομένα.
+            </Text>
+            <Text style={styles.guideStep}>
+              <Text style={styles.guideNum}>4. </Text>
+              <Text style={styles.guideBold}>Super Admin</Text>
+              {'\n'}
+              Εδώ προσθέτεις ή αλλάζεις ποιοι emails είναι Super Admin (πρόσβαση σε αυτή την οθόνη). Κράτα τουλάχιστον
+              έναν ενεργό.
+            </Text>
+          </View>
+        ) : null}
+      </View>
+
       <Text style={styles.sectionTitle}>Ρυθμίσεις συστήματος</Text>
       <Text style={styles.hint}>
         Μόνο υπάρχοντες Super Admin μπορούν να προσθέτουν άλλους. Το setup wizard κλειδώνει αφού δημιουργηθεί
@@ -327,7 +379,13 @@ export default function SuperAdminDashboard() {
 
       <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Ενεργοί tenants</Text>
       {tenants.length === 0 ? (
-        <Text style={styles.hint}>Δεν υπάρχουν εγγραφές στη συλλογή tenants.</Text>
+        <View style={styles.emptyTenantsBox}>
+          <Text style={styles.emptyTenantsTitle}>Δεν υπάρχει ακόμα tenant</Text>
+          <Text style={styles.hint}>
+            Αυτό είναι φυσιολογικό μετά το πρώτο setup αν δεν ολοκληρώθηκε το βήμα tenant. Σκρόλαρε λίγο κάτω στο
+            «Νέος tenant», συμπλήρωσε όνομα + admin email και πάτα «Δημιουργία tenant».
+          </Text>
+        </View>
       ) : (
         tenants.map((t) => (
           <View key={t.id} style={styles.card}>
@@ -340,6 +398,10 @@ export default function SuperAdminDashboard() {
       )}
 
       <Text style={[styles.sectionTitle, { marginTop: 28 }]}>Νέος tenant</Text>
+      <Text style={styles.hint}>
+        Για την πρώτη οργάνωση: βάλε όνομα που καταλαβαίνεις εσύ και ως admin email το ίδιο με το λογαριασμό σου αν
+        είσαι και διαχειριστής αυτού του tenant.
+      </Text>
       <Text style={styles.label}>Όνομα (π.χ. Client_Greece)</Text>
       <TextInput
         style={styles.input}
@@ -395,6 +457,54 @@ export default function SuperAdminDashboard() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#faf5ff' },
   section: { padding: 16, paddingBottom: 48 },
+  guideCard: {
+    backgroundColor: '#fff',
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e9d5ff',
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  guideCardUrgent: {
+    borderColor: '#f59e0b',
+    borderWidth: 2,
+    backgroundColor: '#fffbeb',
+  },
+  guideHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  guideTitle: { fontSize: 16, fontWeight: '800', color: '#4c1d95', flex: 1 },
+  guideToggle: { fontSize: 14, color: '#7c3aed', fontWeight: '700' },
+  guideUrgentLine: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#b45309',
+    paddingHorizontal: 14,
+    paddingBottom: 10,
+    lineHeight: 20,
+  },
+  guideBody: { paddingHorizontal: 14, paddingBottom: 14 },
+  guideStep: {
+    fontSize: 14,
+    color: '#334155',
+    lineHeight: 22,
+    marginBottom: 14,
+  },
+  guideNum: { fontWeight: '800', color: '#7c3aed' },
+  guideBold: { fontWeight: '700', color: '#1e293b' },
+  emptyTenantsBox: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+  },
+  emptyTenantsTitle: { fontSize: 15, fontWeight: '800', color: '#92400e', marginBottom: 6 },
   centered: { flex: 1, justifyContent: 'center', padding: 24, backgroundColor: '#faf5ff' },
   warn: { fontSize: 16, color: '#b45309', textAlign: 'center' },
   title: { fontSize: 22, fontWeight: '800', color: '#4c1d95' },

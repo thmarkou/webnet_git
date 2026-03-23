@@ -40,6 +40,7 @@ import * as Location from 'expo-location';
 import { useAuth } from '../../context/AuthContext';
 import { FormSelect } from '../../components/FormSelect';
 import { useFirestoreCatalog } from '../../hooks/useFirestoreCatalog';
+import { professionDisplayForStored } from '../../utils/professionDisplay';
 import { normalizeUserProfileFromFirestore } from '../../api/userDocument';
 import { mapImportedProfessionalDoc } from '../../utils/importedProfessional';
 import { usersProsQuery, withTenantScope } from '../../utils/tenantFirestore';
@@ -322,7 +323,11 @@ export default function SearchScreen() {
             <Text style={styles.cardTitle}>
               {item.businessName || `${item.firstName} ${item.lastName}`}
             </Text>
-            <Text style={styles.cardProfession}>{item.profession || '—'}</Text>
+            <Text style={styles.cardProfession}>
+              {item.profession?.trim()
+                ? professionDisplayForStored(item.profession).label
+                : '—'}
+            </Text>
             <Text style={styles.cardFullAddress}>{formatProfessionalAddress(item)}</Text>
             {item.availableToday === true && (
               <Text style={styles.availBadge}>Διαθέσιμος σήμερα</Text>
@@ -350,6 +355,7 @@ export default function SearchScreen() {
           placeholder="Όλα τα επαγγέλματα"
           allowEmpty
           emptyLabel="Όλα τα επαγγέλματα"
+          getOptionLabel={(v) => professionDisplayForStored(v).label}
         />
         <FormSelect
           label="Πόλη"

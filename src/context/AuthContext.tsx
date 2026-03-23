@@ -84,6 +84,13 @@ export interface ProfessionalRegistrationData extends UserRegistrationData {
   servicePrice: number;
 }
 
+/**
+ * Εισαγωγή επαγγελματία από Admin — ίδια πεδία με την εγγραφή επαγγελματία (χωρίς κωδικό / Firebase Auth).
+ */
+export type AdminProfessionalEntryInput = Omit<ProfessionalRegistrationData, 'password'> & {
+  tenantId: string;
+};
+
 interface AuthContextValue {
   user: FirebaseUser | null;
   userProfile: User | null;
@@ -108,6 +115,11 @@ interface AuthContextValue {
   sendPasswordReset: (email: string) => Promise<void>;
   signUpUser: (data: UserRegistrationData) => Promise<void>;
   signUpProfessional: (data: ProfessionalRegistrationData) => Promise<void>;
+  /**
+   * Δημιουργεί `users/{autoId}` με role `pro` (επαγγελματίας στο σχήμα της εφαρμογής — όχι το string "professional").
+   * Δεν καλεί createUserWithEmailAndPassword: η σύνδεση του διαχειριστή μένει ίδια.
+   */
+  createProfessionalRecordAsAdmin: (input: AdminProfessionalEntryInput) => Promise<void>;
   signOut: () => Promise<void>;
   refreshUserProfile: () => Promise<void>;
   /** Ξαναφορτώνει super/tenant flags (μετά από αλλαγές tenants/globals). */
@@ -402,27 +414,68 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Η βάση έχει ήδη ρυθμιστεί. Αν είσαι Super Admin, κάνε αποσύνδεση και ξανά σύνδεση.');
     }
     const emailNorm = normalizeEmailForCompare(fu.email);
-    await setDoc(doc(db, SYSTEM_CONFIG_COLLECTION, GLOBALS_DOC_ID), {
+    const DEFAULT_TENANT_ID = 'tenant_default';
+    const globalsPayload = {
       superAdminEmails: [emailNorm],
       superAdminUids: [fu.uid],
-    });
-    const DEFAULT_TENANT_ID = 'tenant_default';
-    await setDoc(doc(db, 'tenants', DEFAULT_TENANT_ID), {
-      tenantId: DEFAULT_TENANT_ID,
-      displayName: 'Default organization',
-      adminEmail: emailNorm,
-      adminUid: fu.uid,
-      active: true,
-      createdAt: Timestamp.now(),
-    });
-    await reassignAllCitiesAndProfessionsToTenant(db, DEFAULT_TENANT_ID);
-    await setDoc(
-      doc(db, 'users', fu.uid),
-      { tenantId: DEFAULT_TENANT_ID, role: 'superadmin' },
-      { merge: true }
-    );
-    setSystemGlobals({ superAdminEmails: [emailNorm], superAdminUids: [fu.uid] });
-    setIsSuperAdmin(true);
+    };
+
+    try {
+      // Βήμα 1 — μόνο globals (ώστε τα rules / token να «σταθεροποιηθούν» πριν τα υπόλοιπα)
+      console.log('[bootstrap] step 1/4: setDoc system_config/globals');
+      await setDoc(doc(db, SYSTEM_CONFIG_COLLECTION, GLOBALS_DOC_ID), globalsPayload);
+      setSystemGlobals({ superAdminEmails: [emailNorm], superAdminUids: [fu.uid] });
+      setIsSuperAdmin(true);
+      console.log('[bootstrap] step 1 OK');
+    } catch (e) {
+      console.error('[bootstrap] FAILED step 1 system_config/globals', e);
+      throw new Error(
+        `[Βήμα 1: system_config/globals] ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+
+    try {
+      console.log('[bootstrap] step 2/4: setDoc tenants/tenant_default');
+      await setDoc(doc(db, 'tenants', DEFAULT_TENANT_ID), {
+        tenantId: DEFAULT_TENANT_ID,
+        displayName: 'Default organization',
+        adminEmail: emailNorm,
+        adminUid: fu.uid,
+        active: true,
+        createdAt: Timestamp.now(),
+      });
+      console.log('[bootstrap] step 2 OK');
+    } catch (e) {
+      console.error('[bootstrap] FAILED step 2 tenants/tenant_default', e);
+      throw new Error(
+        `[Βήμα 2: tenants/tenant_default] ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+
+    try {
+      console.log('[bootstrap] step 3/4: reassign cities/professions tenantId');
+      await reassignAllCitiesAndProfessionsToTenant(db, DEFAULT_TENANT_ID);
+      console.log('[bootstrap] step 3 OK');
+    } catch (e) {
+      console.error('[bootstrap] FAILED step 3 reassignCatalogToTenant', e);
+      throw new Error(
+        `[Βήμα 3: cities/professions tenantId] ${e instanceof Error ? e.message : String(e)}`
+      );
+    }
+
+    try {
+      console.log('[bootstrap] step 4/4: setDoc users/{uid} merge');
+      await setDoc(
+        doc(db, 'users', fu.uid),
+        { tenantId: DEFAULT_TENANT_ID, role: 'superadmin' },
+        { merge: true }
+      );
+      console.log('[bootstrap] step 4 OK');
+    } catch (e) {
+      console.error('[bootstrap] FAILED step 4 users/{uid}', e);
+      throw new Error(`[Βήμα 4: users] ${e instanceof Error ? e.message : String(e)}`);
+    }
+
     setIsTenantAdmin(true);
     await refreshUserProfile();
     await refreshTenantAccess();
@@ -437,6 +490,87 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const hasTenantDataAccess = isSuperAdmin || tenantId != null;
 
   const canAccessAdminDashboard = isSuperAdmin || isTenantAdmin;
+
+  const createProfessionalRecordAsAdmin = useCallback(
+    async (input: AdminProfessionalEntryInput) => {
+      if (!auth.currentUser) {
+        throw new Error('Χρειάζεται σύνδεση.');
+      }
+      if (!isSuperAdmin && !isTenantAdmin) {
+        throw new Error('Δεν έχεις δικαίωμα να προσθέτεις επαγγελματίες.');
+      }
+      if (!isSuperAdmin) {
+        if (!tenantId || input.tenantId.trim() !== tenantId) {
+          throw new Error('Μπορείς να προσθέτεις μόνο στον δικό σου tenant.');
+        }
+      }
+
+      const coords = finiteCoordsOrUndefined(input.latitude, input.longitude);
+      if (!coords) {
+        throw new Error('Όρισέ έγκυρες συντεταγμένες στον χάρτη πριν την αποθήκευση.');
+      }
+
+      const estimate = input.serviceTimeEstimate.trim();
+      const service: Service =
+        input.serviceName.trim() || input.serviceDesc || input.servicePrice > 0 || estimate
+          ? {
+              name: input.serviceName.trim() || 'Υπηρεσία',
+              desc: input.serviceDesc,
+              price: input.servicePrice,
+              priceBasis: input.servicePriceBasis,
+              ...(estimate ? { timeEstimate: estimate } : {}),
+            }
+          : { name: '', desc: '', price: 0, priceBasis: 'fixed' };
+
+      const trialEndDate = Timestamp.fromMillis(Date.now() + TRIAL_MS);
+      const emailRaw = input.email.trim();
+      const emailNorm = emailRaw ? normalizeEmailForCompare(emailRaw) : '';
+
+      const newRef = doc(collection(db, 'users'));
+      const uid = newRef.id;
+
+      const proDoc: Professional = {
+        uid,
+        email: emailNorm,
+        role: 'pro',
+        firstName: input.firstName.trim(),
+        lastName: input.lastName.trim(),
+        phone: input.phone.trim(),
+        profession: input.profession.trim(),
+        location: `${input.city.trim()}, ${input.country.trim() || 'Ελλάδα'}`,
+        friends: [],
+        pendingRequests: [],
+        businessName: input.businessName.trim(),
+        vat: input.vat.trim(),
+        website: input.website ?? '',
+        bio: input.bio ?? '',
+        address: input.address.trim(),
+        addressNumber: input.addressNumber ?? '',
+        area: input.area ?? '',
+        zip: input.zip.trim(),
+        city: input.city.trim(),
+        country: input.country ?? 'Ελλάδα',
+        profileDisplayType: input.profileDisplayType,
+        profileImageBase64:
+          input.profileImageBase64 != null && String(input.profileImageBase64).trim() !== ''
+            ? input.profileImageBase64
+            : null,
+        latitude: coords.latitude,
+        longitude: coords.longitude,
+        services: service.name ? [service] : [],
+        ratingAvg: 0,
+        totalReviews: 0,
+        availableToday: false,
+        trialEndDate,
+        accountStatus: 'trial',
+        subscriptionPlan: null,
+        tenantId: input.tenantId.trim(),
+      };
+
+      await setDoc(newRef, proDoc);
+    },
+    [isSuperAdmin, isTenantAdmin, tenantId]
+  );
 
   const globalsDocExists = systemGlobals !== undefined && systemGlobals !== null;
   const needsDatabaseSetup = Boolean(user && !loading && systemGlobals === null);
@@ -457,6 +591,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     sendPasswordReset,
     signUpUser,
     signUpProfessional,
+    createProfessionalRecordAsAdmin,
     signOut,
     refreshUserProfile,
     refreshTenantAccess,
