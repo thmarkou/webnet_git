@@ -16,7 +16,14 @@ import {
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import { collection, query, where, getDocs, doc, getDoc } from 'firebase/firestore';
+import {
+  collection,
+  getDocs,
+  doc,
+  getDoc,
+  type CollectionReference,
+  type DocumentData,
+} from 'firebase/firestore';
 import { db } from '../../api';
 import type { Professional, Review } from '../../api/types';
 import { Star, SlidersHorizontal } from 'lucide-react-native';
@@ -27,11 +34,15 @@ import {
   ProfessionalAvatarIcon,
 } from '../../assets/avatars';
 import { formatProfessionalAddress, minServicePrice } from '../../utils/proSearch';
+import { formatSearchCardServiceLine } from '../../utils/servicePricing';
 import type { SearchStackParamList } from '../../navigation/SearchStack';
 import * as Location from 'expo-location';
 import { useAuth } from '../../context/AuthContext';
 import { FormSelect } from '../../components/FormSelect';
-import { CITY_LABELS, PROFESSIONS } from '../../constants/data';
+import { useFirestoreCatalog } from '../../hooks/useFirestoreCatalog';
+import { normalizeUserProfileFromFirestore } from '../../api/userDocument';
+import { mapImportedProfessionalDoc } from '../../utils/importedProfessional';
+import { usersProsQuery, withTenantScope } from '../../utils/tenantFirestore';
 import {
   RADIUS_FILTER_OPTIONS,
   PRICE_SORT_OPTIONS,
@@ -41,34 +52,14 @@ import {
   type MinRatingKey,
 } from '../../constants/searchFilters';
 
-/** Εξασφαλίζει αριθμητικό lat/lng από Firestore (αποφυγή λάθους απόστασης αν ήρθαν ως string). */
-function toFiniteCoord(value: unknown): number | undefined {
-  if (value == null) return undefined;
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string') {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : undefined;
-  }
-  return undefined;
-}
-
-function mapDocToProfessional(
-  id: string,
-  data: Record<string, unknown>
-): Professional {
-  const lat = toFiniteCoord(data.latitude);
-  const lng = toFiniteCoord(data.longitude);
-  return {
-    uid: id,
-    ...data,
-    latitude: lat,
-    longitude: lng,
-  } as Professional;
+function mapDocToProfessional(id: string, data: Record<string, unknown>): Professional {
+  return normalizeUserProfileFromFirestore(id, data) as Professional;
 }
 
 export default function SearchScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<SearchStackParamList>>();
-  const { user } = useAuth();
+  const { user, loading: authLoading, hasTenantDataAccess, isSuperAdmin, tenantId } = useAuth();
+  const { cityLabels, professions } = useFirestoreCatalog();
   const [professionals, setProfessionals] = useState<Professional[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [myFriendIds, setMyFriendIds] = useState<string[]>([]);
@@ -139,19 +130,39 @@ export default function SearchScreen() {
 
   useEffect(() => {
     const fetchProfessionals = async () => {
+      if (authLoading) return;
+      if (!hasTenantDataAccess) {
+        setProfessionals([]);
+        setLoading(false);
+        return;
+      }
       try {
-        const q = query(collection(db, 'users'), where('role', '==', 'pro'));
-        const snapshot = await getDocs(q);
-        const pros = snapshot.docs.map((d) => mapDocToProfessional(d.id, d.data() as Record<string, unknown>));
-        setProfessionals(pros);
+        const usersRef = collection(db, 'users') as CollectionReference<DocumentData>;
+        const uq = usersProsQuery(usersRef, tenantId, isSuperAdmin);
+        const impRef = collection(db, 'importedProfessionals');
+        const iq = withTenantScope(impRef, tenantId, isSuperAdmin);
+        const [userSnap, importedSnap] = await Promise.all([
+          getDocs(uq),
+          getDocs(iq).catch(() => null),
+        ]);
+        const fromUsers = userSnap.docs.map((d) =>
+          mapDocToProfessional(d.id, d.data() as Record<string, unknown>)
+        );
+        const fromImport =
+          importedSnap && !importedSnap.empty
+            ? importedSnap.docs.map((d) =>
+                mapImportedProfessionalDoc(d.id, d.data() as Record<string, unknown>)
+              )
+            : [];
+        setProfessionals([...fromUsers, ...fromImport]);
       } catch {
         setProfessionals([]);
       } finally {
         setLoading(false);
       }
     };
-    fetchProfessionals();
-  }, []);
+    void fetchProfessionals();
+  }, [authLoading, hasTenantDataAccess, isSuperAdmin, tenantId]);
 
   useFocusEffect(
     useCallback(() => {
@@ -163,7 +174,15 @@ export default function SearchScreen() {
       }
       getDoc(doc(db, 'users', user.uid))
         .then((snap) => {
-          setMyFriendIds((snap.data()?.friends ?? []) as string[]);
+          if (!snap.exists()) {
+            setMyFriendIds([]);
+            return;
+          }
+          const n = normalizeUserProfileFromFirestore(
+            user.uid,
+            snap.data() as Record<string, unknown>
+          );
+          setMyFriendIds(n.friends ?? []);
         })
         .catch(() => setMyFriendIds([]));
     }, [user?.uid, loadReviews, refreshUserGpsLocation])
@@ -278,7 +297,7 @@ export default function SearchScreen() {
     const imageUri = getProfileImageUri(item);
     const avatarKind = getProfessionalAvatarKind(item);
     const boosted = friendBoostedProIds.has(item.uid);
-    const minP = minServicePrice(item);
+    const serviceLine = formatSearchCardServiceLine(item);
     return (
       <TouchableOpacity
         style={[styles.card, boosted && styles.cardBoosted]}
@@ -309,11 +328,7 @@ export default function SearchScreen() {
               <Text style={styles.availBadge}>Διαθέσιμος σήμερα</Text>
             )}
             {distance && <Text style={styles.cardDistance}>📍 {distance}</Text>}
-            {item.services?.length > 0 && (
-              <Text style={styles.cardService}>
-                Από €{minP === Number.POSITIVE_INFINITY ? '—' : minP} · {item.services[0].name}
-              </Text>
-            )}
+            {serviceLine ? <Text style={styles.cardService}>{serviceLine}</Text> : null}
           </View>
         </View>
       </TouchableOpacity>
@@ -330,7 +345,7 @@ export default function SearchScreen() {
         <FormSelect
           label="Επάγγελμα"
           value={filterProfession}
-          options={PROFESSIONS}
+          options={professions}
           onChange={setFilterProfession}
           placeholder="Όλα τα επαγγέλματα"
           allowEmpty
@@ -339,7 +354,7 @@ export default function SearchScreen() {
         <FormSelect
           label="Πόλη"
           value={filterCity}
-          options={CITY_LABELS}
+          options={cityLabels}
           onChange={setFilterCity}
           placeholder="Όλες οι πόλεις"
           allowEmpty
@@ -402,6 +417,17 @@ export default function SearchScreen() {
     );
   }
 
+  const tenantWallBanner =
+    !authLoading && user && !hasTenantDataAccess ? (
+      <View style={styles.tenantWallBanner}>
+        <Text style={styles.tenantWallTitle}>Χωρίς tenant</Text>
+        <Text style={styles.tenantWallText}>
+          Ο λογαριασμός σου δεν έχει tenantId στο προφίλ. Δεν εμφανίζονται δεδομένα πελατών. Επικοινώνησε
+          με τον διαχειριστή.
+        </Text>
+      </View>
+    ) : null;
+
   return (
     <View style={styles.container}>
       <FlatList
@@ -409,7 +435,14 @@ export default function SearchScreen() {
         keyExtractor={(item) => item.uid}
         renderItem={renderItem}
         contentContainerStyle={styles.list}
-        ListEmptyComponent={<Text style={styles.empty}>Δεν βρέθηκαν επαγγελματίες</Text>}
+        ListHeaderComponent={tenantWallBanner ?? undefined}
+        ListEmptyComponent={
+          !hasTenantDataAccess && user && !authLoading ? (
+            <Text style={styles.empty}>Δεν είναι διαθέσιμα δεδομένα χωρίς tenant.</Text>
+          ) : (
+            <Text style={styles.empty}>Δεν βρέθηκαν επαγγελματίες</Text>
+          )
+        }
         keyboardShouldPersistTaps="handled"
       />
 
@@ -497,4 +530,14 @@ const styles = StyleSheet.create({
   cardDistance: { fontSize: 17, fontWeight: '700', color: '#0f172a', marginTop: 4 },
   cardService: { fontSize: 12, color: '#475569', marginTop: 4 },
   empty: { textAlign: 'center', color: '#64748b', marginTop: 32, fontSize: 16 },
+  tenantWallBanner: {
+    backgroundColor: '#fef3c7',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+  },
+  tenantWallTitle: { fontSize: 15, fontWeight: '700', color: '#92400e', marginBottom: 6 },
+  tenantWallText: { fontSize: 13, color: '#78350f', lineHeight: 18 },
 });

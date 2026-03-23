@@ -6,10 +6,11 @@ import { View, ActivityIndicator, StyleSheet } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { AuthStack } from './AuthStack';
-import { MainStack } from './MainStack';
+import { MainNavigator } from './MainNavigator';
+import FirstTimeDatabaseSetupScreen from '../screens/FirstTimeDatabaseSetupScreen';
 
 export function RootNavigator() {
-  const { user, loading } = useAuth();
+  const { user, loading, needsDatabaseSetup } = useAuth();
 
   if (loading) {
     return (
@@ -19,9 +20,13 @@ export function RootNavigator() {
     );
   }
 
+  if (user && needsDatabaseSetup) {
+    return <FirstTimeDatabaseSetupScreen />;
+  }
+
   return (
     <NavigationContainer>
-      {user ? <MainStack /> : <AuthStack />}
+      {user ? <MainNavigator /> : <AuthStack />}
     </NavigationContainer>
   );
 }

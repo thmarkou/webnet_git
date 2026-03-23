@@ -3,7 +3,7 @@
  * Uses expo-file-system for React Native compatibility with local URIs
  */
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { storage } from './firebaseConfig';
 
 export async function uploadProfileImage(

@@ -6,6 +6,8 @@ import { View, Text, ScrollView, StyleSheet, Image } from 'react-native';
 import { useAuth } from '../../context/AuthContext';
 import type { Professional } from '../../api/types';
 import { getProfileImageUri } from '../../utils/imageUtils';
+import { formatServicePriceAndEstimate } from '../../utils/servicePricing';
+import { trialDaysRemaining } from '../../utils/subscription';
 
 export default function MyProfileScreen() {
   const { userProfile } = useAuth();
@@ -30,6 +32,14 @@ export default function MyProfileScreen() {
       )}
       <Text style={styles.title}>{pro.businessName}</Text>
       <Text style={styles.subtitle}>{pro.profession}</Text>
+      {pro.accountStatus === 'trial' && trialDaysRemaining(pro) != null ? (
+        <Text style={styles.trialLine}>
+          Δοκιμαστική περίοδος: απομένουν {trialDaysRemaining(pro)} ημέρες
+        </Text>
+      ) : null}
+      {pro.accountStatus === 'subscribed' ? (
+        <Text style={styles.subLine}>Ενεργή συνδρομή ({pro.subscriptionPlan ?? '—'})</Text>
+      ) : null}
       {pro.bio ? <Text style={styles.bio}>{pro.bio}</Text> : null}
       <View style={styles.section}>
         <Text style={styles.label}>Διεύθυνση</Text>
@@ -42,7 +52,7 @@ export default function MyProfileScreen() {
           <Text style={styles.label}>Υπηρεσίες</Text>
           {pro.services.map((s, i) => (
             <Text key={i} style={styles.service}>
-              {s.name} — €{s.price} ({s.duration} λεπτά)
+              {s.name} — {formatServicePriceAndEstimate(s)}
             </Text>
           ))}
         </View>
@@ -68,6 +78,8 @@ const styles = StyleSheet.create({
   avatarText: { fontSize: 28, fontWeight: '700', color: '#fff' },
   title: { fontSize: 24, fontWeight: '700', color: '#0f172a' },
   subtitle: { fontSize: 16, color: '#059669', marginTop: 4 },
+  trialLine: { fontSize: 13, color: '#b45309', marginTop: 8, fontWeight: '600' },
+  subLine: { fontSize: 13, color: '#047857', marginTop: 6, fontWeight: '600' },
   bio: { fontSize: 14, color: '#475569', marginTop: 12, lineHeight: 22 },
   section: { marginTop: 24 },
   label: { fontSize: 12, fontWeight: '600', color: '#64748b', marginBottom: 4 },

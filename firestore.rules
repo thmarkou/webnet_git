@@ -1,0 +1,165 @@
+rules_version = '2';
+
+/**
+ * Multi-tenant: το tenantId του χρήστη διαβάζεται από `users/{uid}` (όχι από custom claims).
+ * Super Admin: `system_config/globals.superAdminEmails` + `superAdminUids`.
+ * Στο mobile το `request.auth.token.email` συχνά λείπει από το JWT — επιπλέον: uid στη λίστα
+ * και ταιριάζον `users/{uid}.email` με `superAdminEmails` (το email στο προφίλ δεν αλλάζει από self-update).
+ */
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function globalsSnap() {
+      return get(/databases/$(database)/documents/system_config/globals);
+    }
+
+    function globalsSuperAdminUidMatch() {
+      let g = globalsSnap();
+      return g.data.keys().hasAll(['superAdminUids'])
+        && request.auth.uid in g.data.superAdminUids;
+    }
+
+    function globalsSuperAdminEmailMatch() {
+      let g = globalsSnap();
+      return request.auth.token.email != null
+        && request.auth.token.email in g.data.superAdminEmails;
+    }
+
+    /** Όταν το JWT δεν φέρνει email, το `users/{uid}.email` (όπως στο Firestore) ταιριάζει τη λίστα. */
+    function globalsSuperAdminProfileEmailMatch() {
+      let g = globalsSnap();
+      let u = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return u.exists
+        && u.data.keys().hasAll(['email'])
+        && u.data.email in g.data.superAdminEmails;
+    }
+
+    function isSuperAdmin() {
+      return signedIn()
+        && globalsSnap().exists
+        && globalsSnap().data.keys().hasAll(['superAdminEmails'])
+        && (
+          globalsSuperAdminUidMatch()
+          || globalsSuperAdminEmailMatch()
+          || globalsSuperAdminProfileEmailMatch()
+        );
+    }
+
+    function callerUserSnap() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    /** TenantId από το προφίλ χρήστη (ίδιο με το app). */
+    function callerTenantId() {
+      return signedIn()
+        && callerUserSnap().exists
+        && callerUserSnap().data.keys().hasAll(['tenantId'])
+        ? callerUserSnap().data.tenantId
+        : null;
+    }
+
+    function sameTenant(data) {
+      return data != null
+        && data.keys().hasAll(['tenantId'])
+        && callerTenantId() != null
+        && data.tenantId == callerTenantId();
+    }
+
+    /** Πρώτη εγκατάσταση: μόνο όταν δεν υπάρχει ακόμα το globals. */
+    function canCreateInitialGlobals() {
+      return signedIn()
+        && !exists(/databases/$(database)/documents/system_config/globals)
+        && request.resource.data.keys().hasAll(['superAdminEmails', 'superAdminUids'])
+        && request.resource.data.superAdminEmails.size() > 0
+        && request.auth.uid in request.resource.data.superAdminUids;
+    }
+
+    match /system_config/{docId} {
+      allow read: if signedIn();
+      allow create: if docId == 'globals' && canCreateInitialGlobals();
+      allow update: if isSuperAdmin()
+        && request.resource.data.keys().hasAll(['superAdminEmails', 'superAdminUids'])
+        && request.resource.data.superAdminEmails.size() > 0;
+      allow delete: if isSuperAdmin();
+    }
+
+    match /tenants/{tenantId} {
+      allow read: if signedIn() && (
+        isSuperAdmin() ||
+        (
+          resource.data.keys().hasAll(['adminUid'])
+          && resource.data.adminUid == request.auth.uid
+        ) ||
+        (
+          resource.data.keys().hasAll(['adminEmail'])
+          && request.auth.token.email != null
+          && resource.data.adminEmail == request.auth.token.email
+        )
+      );
+      allow create: if signedIn()
+        && request.resource.data.keys().hasAll(['tenantId', 'adminEmail', 'displayName', 'active'])
+        && isSuperAdmin();
+      allow update, delete: if isSuperAdmin();
+    }
+
+    match /users/{userId} {
+      allow read: if signedIn() && (
+        request.auth.uid == userId ||
+        isSuperAdmin() ||
+        sameTenant(resource.data)
+      );
+      allow create: if signedIn() && request.auth.uid == userId;
+      allow update: if isSuperAdmin() || (
+        request.auth.uid == userId &&
+        request.resource.data.tenantId == resource.data.tenantId &&
+        request.resource.data.email == resource.data.email
+      );
+      allow delete: if isSuperAdmin();
+    }
+
+    match /cities/{docId} {
+      allow read: if signedIn() && (isSuperAdmin() || sameTenant(resource.data));
+      allow create: if signedIn()
+        && request.resource.data.keys().hasAll(['tenantId'])
+        && (isSuperAdmin() || request.resource.data.tenantId == callerTenantId());
+      allow update, delete: if signedIn() && (
+        isSuperAdmin() ||
+        (sameTenant(resource.data) && request.resource.data.tenantId == resource.data.tenantId)
+      );
+    }
+
+    match /professions/{docId} {
+      allow read: if signedIn() && (isSuperAdmin() || sameTenant(resource.data));
+      allow create: if signedIn()
+        && request.resource.data.keys().hasAll(['tenantId'])
+        && (isSuperAdmin() || request.resource.data.tenantId == callerTenantId());
+      allow update, delete: if signedIn() && (
+        isSuperAdmin() ||
+        (sameTenant(resource.data) && request.resource.data.tenantId == resource.data.tenantId)
+      );
+    }
+
+    match /importedProfessionals/{docId} {
+      allow read: if signedIn() && (isSuperAdmin() || sameTenant(resource.data));
+      allow create: if signedIn()
+        && request.resource.data.keys().hasAll(['tenantId'])
+        && (isSuperAdmin() || request.resource.data.tenantId == callerTenantId());
+      allow update, delete: if signedIn() && (
+        isSuperAdmin() ||
+        (sameTenant(resource.data) && request.resource.data.tenantId == resource.data.tenantId)
+      );
+    }
+
+    match /reviews/{docId} {
+      allow read, write: if signedIn();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

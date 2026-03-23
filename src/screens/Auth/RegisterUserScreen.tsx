@@ -20,7 +20,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { User } from 'lucide-react-native';
 import { useAuth } from '../../context/AuthContext';
 import { FormSelect } from '../../components/FormSelect';
-import { CITY_LABELS, PROFESSIONS } from '../../constants/data';
+import { useFirestoreCatalog } from '../../hooks/useFirestoreCatalog';
 
 type AuthStackParamList = {
   Login: undefined;
@@ -32,6 +32,7 @@ type AuthStackParamList = {
 export default function RegisterUserScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { signUpUser } = useAuth();
+  const { cityLabels, professions } = useFirestoreCatalog();
   const [loading, setLoading] = useState(false);
   const [form, setForm] = useState({
     firstName: '',
@@ -140,7 +141,7 @@ export default function RegisterUserScreen() {
           <FormSelect
             label="Επάγγελμα *"
             value={form.profession}
-            options={PROFESSIONS}
+            options={professions}
             onChange={(v) => updateField('profession', v)}
             placeholder="Επίλεξε επάγγελμα"
             disabled={loading}
@@ -148,7 +149,7 @@ export default function RegisterUserScreen() {
           <FormSelect
             label="Πόλη *"
             value={form.location}
-            options={CITY_LABELS}
+            options={cityLabels}
             onChange={(v) => updateField('location', v)}
             placeholder="Επίλεξε πόλη"
             disabled={loading}

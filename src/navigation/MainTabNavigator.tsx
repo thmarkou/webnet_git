@@ -5,11 +5,13 @@ import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import { Search, Users, Calendar, Settings, User } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
+import { useTrialReminders } from '../hooks/useTrialReminders';
+import type { Professional } from '../api/types';
 
 import { SearchStack } from './SearchStack';
 import FriendsScreen from '../screens/User/FriendsScreen';
 import AppointmentsScreen from '../screens/User/AppointmentsScreen';
-import SettingsScreen from '../screens/User/SettingsScreen';
+import SettingsScreen from '../screens/SettingsScreen';
 
 import MyProfileScreen from '../screens/Professional/MyProfileScreen';
 import MyAppointmentsScreen from '../screens/Professional/MyAppointmentsScreen';
@@ -19,8 +21,9 @@ import ProSettingsScreen from '../screens/Professional/ProSettingsScreen';
 const Tab = createBottomTabNavigator();
 
 export function MainTabNavigator() {
-  const { userProfile } = useAuth();
+  const { userProfile, user } = useAuth();
   const isPro = userProfile?.role === 'pro';
+  useTrialReminders(isPro ? (userProfile as Professional) : null, user?.uid);
 
   if (isPro) {
     return (

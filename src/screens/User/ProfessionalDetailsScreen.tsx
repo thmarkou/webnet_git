@@ -20,22 +20,15 @@ import MapView, { Marker } from 'react-native-maps';
 import { MapPin, Phone, Mail, MessageCircle } from 'lucide-react-native';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../../api';
+import { normalizeUserProfileFromFirestore } from '../../api/userDocument';
 import type { Professional } from '../../api/types';
+import { mapImportedProfessionalDoc } from '../../utils/importedProfessional';
 import { getProfileImageUri } from '../../utils/imageUtils';
+import { formatServicePriceAndEstimate } from '../../utils/servicePricing';
 import {
   getProfessionalAvatarKind,
   ProfessionalAvatarIcon,
 } from '../../assets/avatars';
-
-function toCoord(v: unknown): number | undefined {
-  if (v == null) return undefined;
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
-  if (typeof v === 'string') {
-    const n = Number(v);
-    return Number.isFinite(n) ? n : undefined;
-  }
-  return undefined;
-}
 
 export default function ProfessionalDetailsScreen() {
   const route = useRoute<RouteProp<{ ProfessionalDetails: { professional: Professional } }, 'ProfessionalDetails'>>();
@@ -47,17 +40,21 @@ export default function ProfessionalDetailsScreen() {
     let cancelled = false;
     (async () => {
       try {
+        if (routePro.imported) {
+          const snap = await getDoc(doc(db, 'importedProfessionals', routePro.uid));
+          if (!snap.exists() || cancelled) return;
+          setProfessional(
+            mapImportedProfessionalDoc(routePro.uid, snap.data() as Record<string, unknown>)
+          );
+          return;
+        }
         const snap = await getDoc(doc(db, 'users', routePro.uid));
         if (!snap.exists() || cancelled) return;
-        const d = snap.data() as Record<string, unknown>;
-        const lat = toCoord(d.latitude);
-        const lng = toCoord(d.longitude);
-        // Μόνο συντεταγμένες από Firestore — αποφεύγουμε spread όλου του doc (Timestamps κ.λπ.)
-        setProfessional((prev) => ({
-          ...prev,
-          latitude: lat ?? prev.latitude,
-          longitude: lng ?? prev.longitude,
-        }));
+        const merged = normalizeUserProfileFromFirestore(
+          routePro.uid,
+          snap.data() as Record<string, unknown>
+        ) as Professional;
+        setProfessional(merged);
       } catch {
         /* κρατάμε route params */
       }
@@ -65,7 +62,7 @@ export default function ProfessionalDetailsScreen() {
     return () => {
       cancelled = true;
     };
-  }, [routePro.uid]);
+  }, [routePro.uid, routePro.imported]);
 
   const imageUri = getProfileImageUri(professional);
   const avatarKind = getProfessionalAvatarKind(professional);
@@ -161,9 +158,7 @@ export default function ProfessionalDetailsScreen() {
             <View key={i} style={styles.serviceCard}>
               <Text style={styles.serviceName}>{s.name}</Text>
               {s.desc ? <Text style={styles.serviceDesc}>{s.desc}</Text> : null}
-              <Text style={styles.servicePrice}>
-                €{s.price} — {s.duration} λεπτά
-              </Text>
+              <Text style={styles.servicePrice}>{formatServicePriceAndEstimate(s)}</Text>
             </View>
           ))}
         </View>

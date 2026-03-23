@@ -21,6 +21,7 @@ import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../../context/AuthContext';
 import { AppLogo } from '../../components/AppLogo';
 import { getLastEmail, setLastEmail } from '../../utils/lastEmail';
+import { AppUiBuildRibbon } from '../../components/AppUiBuildRibbon';
 
 type AuthStackParamList = {
   Login: undefined;
@@ -92,6 +93,7 @@ export default function LoginScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.content}>
+          <AppUiBuildRibbon />
           <AppLogo size={112} style={styles.logo} />
           <Text style={styles.title}>Σύνδεση</Text>
 

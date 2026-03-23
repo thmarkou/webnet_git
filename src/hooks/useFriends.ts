@@ -5,6 +5,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { doc, getDoc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '../api';
+import { normalizeUserProfileFromFirestore } from '../api/userDocument';
 import type { User } from '../api/types';
 
 export function useFriends(userId: string | undefined) {
@@ -24,9 +25,12 @@ export function useFriends(userId: string | undefined) {
       const userRef = doc(db, 'users', userId);
       const userSnap = await getDoc(userRef);
       const userData = userSnap.data();
+      const normalized = userData
+        ? normalizeUserProfileFromFirestore(userId, userData as Record<string, unknown>)
+        : null;
 
-      const friendIds = (userData?.friends ?? []) as string[];
-      const pendingIds = (userData?.pendingRequests ?? []) as string[];
+      const friendIds = normalized?.friends ?? [];
+      const pendingIds = normalized?.pendingRequests ?? [];
 
       const [friendDocs, pendingDocs] = await Promise.all([
         Promise.all(friendIds.map((id) => getDoc(doc(db, 'users', id)))),
