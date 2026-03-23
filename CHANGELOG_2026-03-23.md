@@ -1,6 +1,6 @@
 # Changelog — 23 Μαρτίου 2026
 
-Multi-tenant, Super Admin, πρώτο setup Firestore, crystal reset, rules — και **ανοιχτό σφάλμα** permissions.
+Συνέχεια από `CHANGELOG_2026-03-22.md`: multi-tenant, Super Admin, πρώτο setup Firestore, crystal reset, rules.
 
 ---
 
@@ -8,12 +8,12 @@ Multi-tenant, Super Admin, πρώτο setup Firestore, crystal reset, rules — 
 
 - **`system_config/globals`**: `superAdminEmails` + **`superAdminUids`** (JWT στο mobile συχνά χωρίς `email`· το `uid` στα rules).
 - **Πρώτο setup** (`FirstTimeDatabaseSetupScreen` / `completeFirstTimeDatabaseSetup`): globals, tenant `tenant_default`, superadmin, **`setDoc` με `merge`** στο `users/{uid}`.
-- **`reassignAllCitiesAndProfessionsToTenant`**: μετά το setup, όλα τα `cities` / `professions` παίρνουν `tenantId: tenant_default` (όχι ορφανά `tenantId` μετά crystal που κρατάει καταλόγους).
-- **Crystal reset (Settings, Super Admin)**: σβήνει `reviews`, `importedProfessionals`, `tenants`, `users`, `system_config` — **όχι** `cities` / `professions` (για εγγραφή νέου χρήστη με dropdowns).
+- **`reassignAllCitiesAndProfessionsToTenant`**: μετά το setup, όλα τα `cities` / `professions` παίρνουν `tenantId: tenant_default`.
+- **Crystal reset (Settings, Super Admin)**: σβήνει `reviews`, `importedProfessionals`, `tenants`, `users`, `system_config` — **όχι** `cities` / `professions`.
 - **AuthContext**: αποτυχία `getDoc(users)` ή tenant-admin query να **μην μηδενίζει** `systemGlobals`.
-- **`firestore.rules`**: `isSuperAdmin()` = uid στη λίστα **ή** email στο token **ή** `users/{uid}.email` ∈ `superAdminEmails`· tenants με **`adminUid`**· διαγραφή `system_config` για Super Admin.
+- **`firestore.rules`**: `isSuperAdmin()` = uid **ή** email στο token **ή** `users/{uid}.email` ∈ `superAdminEmails`· tenants με **`adminUid`**· διαγραφή `system_config` για Super Admin.
 - **Εγγραφή**: `email` normalized (lowercase) στο `users`.
-- **Self-update `users`**: κλείδωμα αλλαγής `email` (ίδιο `resource` / `request`) για ασφάλεια.
+- **Self-update `users`**: κλείδωμα αλλαγής `email` για ασφάλεια.
 - **SuperAdminDashboard**: `buildGlobalsSuperAdminPayload`, tenant με **`adminUid`** όταν υπάρχει χρήστης με το admin email.
 
 **Κύρια αρχεία:** `firestore.rules`, `src/context/AuthContext.tsx`, `src/api/systemConfig.ts`, `src/api/resetFirestoreToCrystal.ts`, `src/api/reassignCatalogToTenant.ts`, `src/screens/SettingsScreen.tsx`, `src/screens/SuperAdminDashboard.tsx`, `src/screens/FirstTimeDatabaseSetupScreen.tsx`.
@@ -23,11 +23,10 @@ Multi-tenant, Super Admin, πρώτο setup Firestore, crystal reset, rules — 
 ## 2. Ανοιχτό πρόβλημα: `Missing or insufficient permissions`
 
 - Στο **Super Admin**, π.χ. **Δημιουργία tenant**: alert **`Missing or insufficient permissions`** (άρνηση Firestore rules).
-- Το UI μπορεί να δείχνει Super Admin, το write απορρίπτεται.
 
 **Έλεγχοι:** deploy `firestore.rules` · `globals` με `superAdminEmails` + `superAdminUids` · `users/{uid}.email` ταιριάζει · ίδιο Firebase project στο app και Console.
 
-**Ιδέες για συνέχεια:** Rules Playground / Cloud Function (Admin SDK) / callable για ευαίσθητες πράξεις.
+**Ιδέες:** Rules Playground / Cloud Function (Admin SDK) / callable για ευαίσθητες πράξεις.
 
 ---
 
@@ -37,4 +36,14 @@ Multi-tenant, Super Admin, πρώτο setup Firestore, crystal reset, rules — 
 
 ---
 
-*Git commit που είχε αναφορά σε ξεχωριστό doc: πλέον η πηγή αλήθειας για αυτή τη μέρα είναι μόνο αυτό το CHANGELOG.*
+## Αρχεία αναφοράς
+
+| Αρχείο | Περιεχόμενο |
+|--------|-------------|
+| `CHANGELOG_2026-03-22.md` | Χάρτης, αναζήτηση, εγγραφή επαγγελματία (22/3) |
+| `CHANGELOG_2025-03-18.md` | Παλαιότερη σύνοψη project |
+| `README.md` | Εκκίνηση, scripts |
+
+---
+
+*Για push: `git add -A && git commit && git push` από το root του repo.*
