@@ -51,6 +51,37 @@ import { trialEndMs } from '../utils/subscription';
 
 const TRIAL_MS = 30 * 24 * 60 * 60 * 1000;
 
+/** Προεπιλεγμένο tenant (ίδιο με bootstrap / Admin) — χωρίς αυτό οι απλοί χρήστες δεν βλέπουν επαγγελματίες στην αναζήτηση. */
+const DEFAULT_APP_TENANT_ID = 'tenant_default';
+
+function tenantIdMissing(raw: Record<string, unknown>): boolean {
+  const t = raw.tenantId;
+  if (t == null) return true;
+  if (typeof t !== 'string') return true;
+  return t.trim() === '';
+}
+
+/**
+ * Φόρτωση users/{uid}· αν λείπει tenantId, merge tenant_default (μία φορά) ώστε παλιοί λογαριασμοί να δουλεύουν χωρίς χειροκίνητο Firestore.
+ */
+async function loadUserProfileWithTenantBackfill(uid: string): Promise<User | Professional | null> {
+  const docRef = doc(db, 'users', uid);
+  const snap = await getDoc(docRef);
+  if (!snap.exists()) return null;
+  let raw = snap.data() as Record<string, unknown>;
+  if (tenantIdMissing(raw)) {
+    try {
+      await setDoc(docRef, { tenantId: DEFAULT_APP_TENANT_ID }, { merge: true });
+      const again = await getDoc(docRef);
+      if (!again.exists()) return null;
+      raw = again.data() as Record<string, unknown>;
+    } catch {
+      /* offline / rules — συνεχίζουμε με ό,τι είχαμε */
+    }
+  }
+  return normalizeUserProfileFromFirestore(uid, raw);
+}
+
 export interface UserRegistrationData {
   email: string;
   password: string;
@@ -65,6 +96,8 @@ export interface ProfessionalRegistrationData extends UserRegistrationData {
   businessName: string;
   vat: string;
   profession: string;
+  /** `professions/{id}` — ίδιο tenant με τον κατάλογο */
+  professionId?: string;
   website: string;
   bio: string;
   address: string;
@@ -72,6 +105,8 @@ export interface ProfessionalRegistrationData extends UserRegistrationData {
   area: string;
   zip: string;
   city: string;
+  /** `cities/{id}` όταν η πόλη προέρχεται από Firestore */
+  cityId?: string;
   country: string;
   profileDisplayType: ProfileDisplayType;
   profileImageBase64?: string | null;
@@ -208,13 +243,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
-      const docRef = doc(db, 'users', u.uid);
-      const docSnap = await getDoc(docRef);
-      setUserProfile(
-        docSnap.exists()
-          ? normalizeUserProfileFromFirestore(u.uid, docSnap.data() as Record<string, unknown>)
-          : null
-      );
+      setUserProfile(await loadUserProfileWithTenantBackfill(u.uid));
     } catch {
       setUserProfile(null);
     }
@@ -248,14 +277,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       // Προφίλ / tenant-admin query: αν αποτύχουν, να μην «σβήνουμε» το globals (αλλιώς εμφανίζεται
       // setup wizard ενώ το `system_config/globals` υπάρχει και το complete setup λέει «ήδη ρυθμιστεί»).
-      let docSnap: Awaited<ReturnType<typeof getDoc>> | null = null;
       let tenantAdm = false;
+      let profile: User | Professional | null = null;
       try {
-        const [uSnap, tAdm] = await Promise.all([
-          getDoc(doc(db, 'users', uid)),
+        const [p, tAdm] = await Promise.all([
+          loadUserProfileWithTenantBackfill(uid),
           loadTenantAdminFlag(emailNorm, uid),
         ]);
-        docSnap = uSnap;
+        profile = p;
         tenantAdm = tAdm;
       } catch {
         setUserProfile(null);
@@ -265,11 +294,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      setUserProfile(
-        docSnap.exists()
-          ? normalizeUserProfileFromFirestore(uid, docSnap.data() as Record<string, unknown>)
-          : null
-      );
+      setUserProfile(profile);
       setIsSuperAdmin(superA);
       setIsTenantAdmin(tenantAdm);
       setLoading(false);
@@ -323,7 +348,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       phone: data.phone,
       profession: data.profession,
       location: data.location,
+      tenantId: DEFAULT_APP_TENANT_ID,
       friends: [],
+      favorites: [],
       pendingRequests: [],
     };
 
@@ -366,8 +393,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       lastName: data.lastName,
       phone: data.phone,
       profession: data.profession,
+      ...(data.professionId ? { professionId: data.professionId } : {}),
       location: data.location,
       friends: [],
+      favorites: [],
       pendingRequests: [],
       businessName: data.businessName,
       vat: data.vat,
@@ -378,6 +407,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       area: data.area ?? '',
       zip: data.zip ?? '',
       city: data.city,
+      ...(data.cityId ? { cityId: data.cityId } : {}),
       country: data.country ?? 'Ελλάδα',
       profileDisplayType: data.profileDisplayType,
       profileImageBase64:
@@ -393,6 +423,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       trialEndDate,
       accountStatus: 'trial',
       subscriptionPlan: null,
+      tenantId: DEFAULT_APP_TENANT_ID,
     };
 
     await setDoc(doc(db, 'users', firebaseUser.uid), proDoc);
@@ -414,7 +445,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       throw new Error('Η βάση έχει ήδη ρυθμιστεί. Αν είσαι Super Admin, κάνε αποσύνδεση και ξανά σύνδεση.');
     }
     const emailNorm = normalizeEmailForCompare(fu.email);
-    const DEFAULT_TENANT_ID = 'tenant_default';
     const globalsPayload = {
       superAdminEmails: [emailNorm],
       superAdminUids: [fu.uid],
@@ -436,8 +466,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       console.log('[bootstrap] step 2/4: setDoc tenants/tenant_default');
-      await setDoc(doc(db, 'tenants', DEFAULT_TENANT_ID), {
-        tenantId: DEFAULT_TENANT_ID,
+      await setDoc(doc(db, 'tenants', DEFAULT_APP_TENANT_ID), {
+        tenantId: DEFAULT_APP_TENANT_ID,
         displayName: 'Default organization',
         adminEmail: emailNorm,
         adminUid: fu.uid,
@@ -454,7 +484,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     try {
       console.log('[bootstrap] step 3/4: reassign cities/professions tenantId');
-      await reassignAllCitiesAndProfessionsToTenant(db, DEFAULT_TENANT_ID);
+      await reassignAllCitiesAndProfessionsToTenant(db, DEFAULT_APP_TENANT_ID);
       console.log('[bootstrap] step 3 OK');
     } catch (e) {
       console.error('[bootstrap] FAILED step 3 reassignCatalogToTenant', e);
@@ -467,7 +497,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       console.log('[bootstrap] step 4/4: setDoc users/{uid} merge');
       await setDoc(
         doc(db, 'users', fu.uid),
-        { tenantId: DEFAULT_TENANT_ID, role: 'superadmin' },
+        { tenantId: DEFAULT_APP_TENANT_ID, role: 'superadmin' },
         { merge: true }
       );
       console.log('[bootstrap] step 4 OK');
@@ -537,8 +567,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         lastName: input.lastName.trim(),
         phone: input.phone.trim(),
         profession: input.profession.trim(),
+        ...(input.professionId ? { professionId: input.professionId } : {}),
         location: `${input.city.trim()}, ${input.country.trim() || 'Ελλάδα'}`,
         friends: [],
+        favorites: [],
         pendingRequests: [],
         businessName: input.businessName.trim(),
         vat: input.vat.trim(),
@@ -549,6 +581,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         area: input.area ?? '',
         zip: input.zip.trim(),
         city: input.city.trim(),
+        ...(input.cityId ? { cityId: input.cityId } : {}),
         country: input.country ?? 'Ελλάδα',
         profileDisplayType: input.profileDisplayType,
         profileImageBase64:

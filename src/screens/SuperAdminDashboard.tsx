@@ -14,6 +14,9 @@ import {
   Platform,
   Switch,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { StackNavigationProp } from '@react-navigation/stack';
+import type { MainNavigatorParamList } from '../navigation/MainNavigator';
 import {
   collection,
   getDocs,
@@ -42,6 +45,7 @@ type TenantRow = TenantDoc & { id: string };
 const globalsRef = doc(db, SYSTEM_CONFIG_COLLECTION, GLOBALS_DOC_ID);
 
 export default function SuperAdminDashboard() {
+  const navigation = useNavigation<StackNavigationProp<MainNavigatorParamList>>();
   const { isSuperAdmin, user, refreshTenantAccess, refreshUserProfile } = useAuth();
   const [tenants, setTenants] = useState<TenantRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -287,6 +291,15 @@ export default function SuperAdminDashboard() {
     <ScrollView style={styles.root} contentContainerStyle={styles.section}>
       <Text style={styles.title}>Super Admin</Text>
       {user?.email ? <Text style={styles.sub}>Συνδεδεμένος: {user.email}</Text> : null}
+
+      <TouchableOpacity
+        style={styles.secondary}
+        onPress={() => navigation.navigate('AdminManageProfessionals')}
+        accessibilityRole="button"
+        accessibilityLabel="Διαχείριση επαγγελματιών"
+      >
+        <Text style={styles.secondaryText}>Διαχείριση επαγγελματιών (λίστα, επεξεργασία, διαγραφή)</Text>
+      </TouchableOpacity>
 
       {loading ? <ActivityIndicator style={{ marginVertical: 12 }} color="#7c3aed" /> : null}
 

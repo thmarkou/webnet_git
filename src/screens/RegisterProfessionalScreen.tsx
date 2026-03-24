@@ -28,6 +28,7 @@ import { FormSelect } from '../components/FormSelect';
 import { professionDisplayForStored } from '../utils/professionDisplay';
 import { matchCityFromGeocode } from '../constants/data';
 import { useFirestoreCatalog } from '../hooks/useFirestoreCatalog';
+import { cityOptionValue, type CatalogProfession } from '../utils/catalogSearchIds';
 import type { ProfileDisplayType, ServicePriceBasis } from '../api/types';
 import { SERVICE_PRICE_BASIS_CHIPS } from '../utils/servicePricing';
 import {
@@ -64,7 +65,7 @@ function servicePricePlaceholder(basis: ServicePriceBasis): string {
 export default function RegisterProfessionalScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<AuthStackParamList>>();
   const { signUpProfessional } = useAuth();
-  const { cities, cityLabels, professions } = useFirestoreCatalog();
+  const { cities, professionCatalog } = useFirestoreCatalog();
   const trialEndPreview = useMemo(() => {
     const d = new Date();
     d.setDate(d.getDate() + 30);
@@ -94,6 +95,7 @@ export default function RegisterProfessionalScreen() {
     businessName: '',
     vat: '',
     profession: '',
+    professionId: '',
     website: '',
     bio: '',
     address: '',
@@ -101,6 +103,7 @@ export default function RegisterProfessionalScreen() {
     area: '',
     zip: '',
     city: '',
+    cityId: '',
     country: 'Ελλάδα',
     serviceName: '',
     serviceDesc: '',
@@ -280,11 +283,12 @@ export default function RegisterProfessionalScreen() {
     onPinMoved(lat, lng);
   };
 
-  const handleCitySelect = (cityLabel: string) => {
-    const c = cities.find((x) => x.label === cityLabel);
+  const handleCitySelect = (cityIdOrLabel: string) => {
+    const c = cities.find((x) => cityOptionValue(x) === cityIdOrLabel);
     setForm((prev) => ({
       ...prev,
-      city: cityLabel,
+      city: c?.label ?? prev.city,
+      cityId: c?.firestoreId ?? (c ? cityIdOrLabel : ''),
       country: c?.country ?? prev.country,
     }));
     if (c) {
@@ -351,6 +355,7 @@ export default function RegisterProfessionalScreen() {
         lastName: lastName.trim(),
         phone: phone.trim(),
         profession: profession.trim(),
+        ...(form.professionId.trim() ? { professionId: form.professionId.trim() } : {}),
         location: `${city.trim()}, ${form.country.trim() || 'Ελλάδα'}`,
         businessName: businessName.trim(),
         vat: vat.trim(),
@@ -361,6 +366,7 @@ export default function RegisterProfessionalScreen() {
         area: form.area.trim(),
         zip: form.zip.trim(),
         city: city.trim(),
+        ...(form.cityId.trim() ? { cityId: form.cityId.trim() } : {}),
         country: form.country.trim() || 'Ελλάδα',
         profileDisplayType,
         profileImageBase64: profileImageBase64 ?? null,
@@ -489,11 +495,19 @@ export default function RegisterProfessionalScreen() {
           />
           <FormSelect
             label="Πόλη *"
-            value={form.city}
-            options={cityLabels}
+            value={
+              form.cityId.trim()
+                ? form.cityId
+                : (() => {
+                    const m = cities.find((x) => x.label === form.city);
+                    return m ? cityOptionValue(m) : '';
+                  })()
+            }
+            options={cities.map(cityOptionValue)}
             onChange={handleCitySelect}
             placeholder="Επίλεξε πόλη"
             disabled={loading}
+            getOptionLabel={(id) => cities.find((c) => cityOptionValue(c) === id)?.label ?? id}
           />
           <TextInput
             style={styles.input}
@@ -627,12 +641,27 @@ export default function RegisterProfessionalScreen() {
           />
           <FormSelect
             label="Επάγγελμα *"
-            value={form.profession}
-            options={professions}
-            onChange={(v) => updateField('profession', v)}
+            value={
+              form.professionId ||
+              professionCatalog.find((p: CatalogProfession) => p.name === form.profession)?.id ||
+              ''
+            }
+            options={professionCatalog.map((p: CatalogProfession) => p.id)}
+            onChange={(id) => {
+              const row = professionCatalog.find((p: CatalogProfession) => p.id === id);
+              setForm((prev) => ({
+                ...prev,
+                professionId: id,
+                profession: row?.name ?? '',
+              }));
+            }}
             placeholder="Επίλεξε επάγγελμα"
             disabled={loading}
-            getOptionLabel={(v) => professionDisplayForStored(v).label}
+            getOptionLabel={(id) =>
+              professionDisplayForStored(
+                professionCatalog.find((p: CatalogProfession) => p.id === id)?.name ?? id
+              ).label
+            }
           />
           <TextInput
             style={styles.input}

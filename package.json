@@ -6,6 +6,7 @@
     "update-passwords": "node scripts/update-passwords.js",
     "wipe-user-data": "node scripts/wipe-user-data.js",
     "migrate-user-shape": "node scripts/migrate-user-shape.js",
+    "backfill-user-tenants": "node scripts/backfill-user-tenantid.js",
     "bulk-import-pros": "node scripts/bulk-import-professionals.js",
     "start": "expo start",
     "start:clear": "expo start --clear",

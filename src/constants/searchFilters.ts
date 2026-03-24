@@ -20,9 +20,11 @@ export const PRICE_SORT_OPTIONS: { key: PriceSortKey; label: string }[] = [
   { key: 'desc', label: 'Τιμή: ψηλά → χαμηλά' },
 ];
 
-export type MinRatingKey = 'any' | '4';
+export type MinRatingKey = 'any' | '3' | '4' | '5';
 
 export const MIN_RATING_OPTIONS: { key: MinRatingKey; label: string; min: number }[] = [
   { key: 'any', label: 'Όλες οι βαθμολογίες', min: 0 },
+  { key: '3', label: '3★ και άνω', min: 3 },
   { key: '4', label: '4★ και άνω', min: 4 },
+  { key: '5', label: '5★ μόνο', min: 5 },
 ];

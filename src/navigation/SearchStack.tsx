@@ -1,9 +1,9 @@
 /**
- * Search stack - SearchScreen + ProfessionalDetailsScreen
+ * Search stack - SearchProfessionalsScreen + ProfessionalDetailsScreen
  */
 import React from 'react';
 import { createStackNavigator } from '@react-navigation/stack';
-import SearchScreen from '../screens/User/SearchScreen';
+import SearchProfessionalsScreen from '../screens/User/SearchProfessionalsScreen';
 import ProfessionalDetailsScreen from '../screens/User/ProfessionalDetailsScreen';
 import type { Professional } from '../api/types';
 
@@ -19,8 +19,8 @@ export function SearchStack() {
     <Stack.Navigator>
       <Stack.Screen
         name="Search"
-        component={SearchScreen}
-        options={{ title: 'Αναζήτηση' }}
+        component={SearchProfessionalsScreen}
+        options={{ title: 'Αναζήτηση επαγγελματιών' }}
       />
       <Stack.Screen
         name="ProfessionalDetails"

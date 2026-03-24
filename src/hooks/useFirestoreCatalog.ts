@@ -1,6 +1,7 @@
 /**
- * Πόλεις και επαγγέλματα: Firestore cities / professions με φίλτρο tenantId.
- * Χωρίς συνδεδεμένο χρήστη: ενσωματωμένο catalog (εγγραφή πριν το login).
+ * Πόλεις και επαγγέλματα από Firestore με φίλτρο tenantId — ίδια λίστα με τη «Διαχείριση βάσης» του ηγέτη tenant.
+ * Συνδεδεμένος χρήστης με tenantId: μόνο εγγραφές του tenant του. Super Admin χωρίς επιλεγμένο tenant: ευρύ query.
+ * Πριν το login: ενσωματωμένο catalog (fallback εγγραφής).
  */
 import { useState, useEffect, useCallback } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
@@ -9,6 +10,7 @@ import type { CityOption } from '../constants/data';
 import { CITIES, PROFESSIONS } from '../constants/data';
 import { useAuth } from '../context/AuthContext';
 import { withTenantScope } from '../utils/tenantFirestore';
+import type { CatalogProfession } from '../utils/catalogSearchIds';
 
 export function useFirestoreCatalog() {
   const {
@@ -20,7 +22,7 @@ export function useFirestoreCatalog() {
     catalogRefreshNonce,
   } = useAuth();
   const [cities, setCities] = useState<CityOption[]>([]);
-  const [professions, setProfessions] = useState<string[]>([]);
+  const [professionCatalog, setProfessionCatalog] = useState<CatalogProfession[]>([]);
   const [loading, setLoading] = useState(true);
 
   const reload = useCallback(async () => {
@@ -28,11 +30,11 @@ export function useFirestoreCatalog() {
     try {
       if (!hasTenantDataAccess) {
         if (!user) {
-          setCities([...CITIES]);
-          setProfessions([...PROFESSIONS]);
+          setCities(CITIES.map((c) => ({ ...c, firestoreId: undefined })));
+          setProfessionCatalog(PROFESSIONS.map((name) => ({ id: name, name })));
         } else {
           setCities([]);
-          setProfessions([]);
+          setProfessionCatalog([]);
         }
         return;
       }
@@ -62,6 +64,7 @@ export function useFirestoreCatalog() {
               latitude: typeof x.latitude === 'number' ? x.latitude : 37.9838,
               longitude: typeof x.longitude === 'number' ? x.longitude : 23.7275,
               country: x.country ?? 'Ελλάδα',
+              firestoreId: d.id,
             };
           })
           .sort((a, b) => a.label.localeCompare(b.label, 'el'));
@@ -71,25 +74,25 @@ export function useFirestoreCatalog() {
       }
 
       if (profSnap && !profSnap.empty) {
-        setProfessions(
-          profSnap.docs
-            .map((d) => {
-              const x = d.data() as { name?: string };
-              return (x.name ?? d.id).trim();
-            })
-            .filter(Boolean)
-            .sort((a, b) => a.localeCompare(b, 'el'))
-        );
+        const plist: CatalogProfession[] = profSnap.docs
+          .map((d) => {
+            const x = d.data() as { name?: string };
+            const name = (x.name ?? d.id).trim();
+            return { id: d.id, name };
+          })
+          .filter((p) => p.name.length > 0)
+          .sort((a, b) => a.name.localeCompare(b.name, 'el'));
+        setProfessionCatalog(plist);
       } else {
-        setProfessions([]);
+        setProfessionCatalog([]);
       }
     } catch {
       if (!user) {
-        setCities([...CITIES]);
-        setProfessions([...PROFESSIONS]);
+        setCities(CITIES.map((c) => ({ ...c, firestoreId: undefined })));
+        setProfessionCatalog(PROFESSIONS.map((name) => ({ id: name, name })));
       } else {
         setCities([]);
-        setProfessions([]);
+        setProfessionCatalog([]);
       }
     } finally {
       setLoading(false);
@@ -102,6 +105,14 @@ export function useFirestoreCatalog() {
   }, [reload, authLoading]);
 
   const cityLabels = cities.map((c) => c.label);
+  const professions = professionCatalog.map((p) => p.name);
 
-  return { cities, cityLabels, professions, loading, reload };
+  return {
+    cities,
+    cityLabels,
+    professions,
+    professionCatalog,
+    loading,
+    reload,
+  };
 }

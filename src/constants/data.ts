@@ -9,6 +9,8 @@ export type CityOption = {
   latitude: number;
   longitude: number;
   country: string;
+  /** Firestore `cities/{id}` — για φίλτρα αναζήτησης ανά tenant */
+  firestoreId?: string;
 };
 
 export const CITIES: readonly CityOption[] = catalog.cities;

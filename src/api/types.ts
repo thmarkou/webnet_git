@@ -68,8 +68,12 @@ export interface User {
   lastName: string;
   phone: string;
   profession: string;
+  /** Σύνδεση με `professions/{id}` — κρίσιμο για κοινωνική αναζήτηση / φίλτρα */
+  professionId?: string;
   location: string;
   friends: string[];
+  /** UIDs επαγγελματιών που ο χρήστης έχει αποθηκεύσει ως αγαπημένους */
+  favorites?: string[];
   pendingRequests: string[];
   /** Multi-tenant: απαιτείται για πρόσβαση σε tenant-scoped δεδομένα (εκτός Super Admin) */
   tenantId?: string;
@@ -95,6 +99,8 @@ export interface Professional extends User {
   area: string;
   zip: string;
   city: string;
+  /** Σύνδεση με `cities/{id}` — κρίσιμο για κοινωνική αναζήτηση / φίλτρα */
+  cityId?: string;
   country: string;
   profileImage?: string;
   /** null = χωρίς φωτογραφία → εικονίδιο Lucide στο UI */

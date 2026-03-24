@@ -13,6 +13,37 @@ export function normalizePriceBasis(s: Service): ServicePriceBasis {
   return 'fixed';
 }
 
+/** Excel / import: κείμενο στήλης → έγκυρο ServicePriceBasis */
+export function parseServicePriceBasisFromImport(raw: unknown): ServicePriceBasis {
+  const s = String(raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  const aliases: Record<string, ServicePriceBasis> = {
+    fixed: 'fixed',
+    σταθερή: 'fixed',
+    σταθερα: 'fixed',
+    per_hour: 'per_hour',
+    perhour: 'per_hour',
+    hour: 'per_hour',
+    hourly: 'per_hour',
+    ωρα: 'per_hour',
+    ώρα: 'per_hour',
+    ανα_ωρα: 'per_hour',
+    ανά_ώρα: 'per_hour',
+    per_visit: 'per_visit',
+    pervisit: 'per_visit',
+    visit: 'per_visit',
+    επισκεψη: 'per_visit',
+    επίσκεψη: 'per_visit',
+    on_quote: 'on_quote',
+    quote: 'on_quote',
+    εκτιμηση: 'on_quote',
+    εκτίμηση: 'on_quote',
+  };
+  return aliases[s] ?? 'fixed';
+}
+
 /** Σύντομο κείμενο τιμής (χωρίς πρόθεμα «Από») */
 export function formatServicePriceText(s: Service): string {
   const basis = normalizePriceBasis(s);

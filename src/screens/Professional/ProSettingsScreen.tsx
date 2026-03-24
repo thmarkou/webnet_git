@@ -5,10 +5,11 @@ import React from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../../context/AuthContext';
-import { LogOut, Shield } from 'lucide-react-native';
+import { LogOut, Shield, Users } from 'lucide-react-native';
 import { AppUiBuildRibbon } from '../../components/AppUiBuildRibbon';
 import { navigateToAdminDashboard } from '../../utils/navigateToAdminDashboard';
 import { navigateToSuperAdminDashboard } from '../../utils/navigateToSuperAdminDashboard';
+import { navigateToAdminManageProfessionals } from '../../utils/navigateToAdminManageProfessionals';
 import { Crown } from 'lucide-react-native';
 
 export default function ProSettingsScreen() {
@@ -31,13 +32,24 @@ export default function ProSettingsScreen() {
         <Text style={styles.email}>{userProfile.email}</Text>
       )}
       {isSuperAdmin ? (
-        <TouchableOpacity
-          style={styles.superAdminButton}
-          onPress={() => navigateToSuperAdminDashboard(navigation)}
-        >
-          <Crown size={20} color="#5b21b6" />
-          <Text style={styles.superAdminButtonText}>Super Admin</Text>
-        </TouchableOpacity>
+        <>
+          <TouchableOpacity
+            style={styles.superAdminButton}
+            onPress={() => navigateToSuperAdminDashboard(navigation)}
+          >
+            <Crown size={20} color="#5b21b6" />
+            <Text style={styles.superAdminButtonText}>Super Admin</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.manageProButton}
+            onPress={() => navigateToAdminManageProfessionals(navigation)}
+          >
+            <Users size={20} color="#5b21b6" />
+            <Text style={styles.manageProButtonText}>
+              Διαχείριση επαγγελματιών (επεξεργασία & διαγραφή)
+            </Text>
+          </TouchableOpacity>
+        </>
       ) : null}
       {showAdmin ? (
         <TouchableOpacity
@@ -45,7 +57,7 @@ export default function ProSettingsScreen() {
           onPress={() => navigateToAdminDashboard(navigation)}
         >
           <Shield size={20} color="#1e3a8a" />
-          <Text style={styles.adminButtonText}>Admin Dashboard</Text>
+          <Text style={styles.adminButtonText}>Διαχείριση βάσης (πόλεις & επαγγέλματα)</Text>
         </TouchableOpacity>
       ) : (
         <Text style={styles.adminHint}>
@@ -87,6 +99,19 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   superAdminButtonText: { fontSize: 15, fontWeight: '700', color: '#5b21b6' },
+  manageProButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#f5f3ff',
+    borderRadius: 12,
+    paddingVertical: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#ddd6fe',
+  },
+  manageProButtonText: { fontSize: 15, fontWeight: '700', color: '#5b21b6', textAlign: 'center' },
   button: {
     flexDirection: 'row',
     alignItems: 'center',

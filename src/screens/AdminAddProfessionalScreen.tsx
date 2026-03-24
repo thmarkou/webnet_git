@@ -3,7 +3,14 @@
  * (τύπος προφίλ, φωτογραφία, διεύθυνση + χάρτης, στοιχεία, επιχείρηση, υπηρεσία).
  * Πόλη & επάγγελμα μόνο από Firestore (tenant). Χωρίς κωδικό — δεν αλλάζει η σύνδεση διαχειριστή.
  */
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useCallback,
+  useMemo,
+  useLayoutEffect,
+} from 'react';
 import {
   View,
   Text,
@@ -17,7 +24,9 @@ import {
   KeyboardAvoidingView,
   Image,
 } from 'react-native';
-import { collection, getDocs, query, where } from 'firebase/firestore';
+import { collection, getDocs, query, where, doc, getDoc, updateDoc } from 'firebase/firestore';
+import { useNavigation, useRoute, type RouteProp } from '@react-navigation/native';
+import type { StackNavigationProp } from '@react-navigation/stack';
 import MapView, { Marker } from 'react-native-maps';
 import * as Location from 'expo-location';
 import * as ImagePicker from 'expo-image-picker';
@@ -29,9 +38,13 @@ import { FormSelect } from '../components/FormSelect';
 import { SearchableSelect, type SearchableSelectOption } from '../components/SearchableSelect';
 import { professionDisplayForStored } from '../utils/professionDisplay';
 import { matchCityFromGeocode } from '../constants/data';
-import { finiteCoordsOrUndefined } from '../api/userDocument';
+import { finiteCoordsOrUndefined, normalizeUserProfileFromFirestore } from '../api/userDocument';
+import { normalizeEmailForCompare } from '../api/systemConfig';
+import { mapImportedProfessionalDoc } from '../utils/importedProfessional';
+import type { MainNavigatorParamList } from '../navigation/MainNavigator';
+import { normCatalogKey } from '../utils/catalogSearchIds';
 import { isValidGreekPhone } from '../utils/phoneValidation';
-import type { ProfileDisplayType, ServicePriceBasis } from '../api/types';
+import type { ProfileDisplayType, Professional, Service, ServicePriceBasis } from '../api/types';
 import { SERVICE_PRICE_BASIS_CHIPS } from '../utils/servicePricing';
 import {
   profileDisplayTypeToAvatarKind,
@@ -60,6 +73,8 @@ type CityRow = {
   latitude: number;
   longitude: number;
 };
+
+type ProfCatalogRow = { id: string; name: string };
 
 function servicePricePlaceholder(basis: ServicePriceBasis): string {
   switch (basis) {
@@ -104,6 +119,13 @@ const emptyForm = () => ({
 });
 
 export default function AdminAddProfessionalScreen() {
+  const navigation = useNavigation<StackNavigationProp<MainNavigatorParamList>>();
+  const route = useRoute<RouteProp<MainNavigatorParamList, 'AdminAddProfessional'>>();
+  const editId = route.params?.editId;
+  const editSource = route.params?.editSource;
+  const isEditMode =
+    Boolean(editId) && (editSource === 'users' || editSource === 'imported');
+
   const {
     isSuperAdmin,
     tenantId: authTenantId,
@@ -111,10 +133,12 @@ export default function AdminAddProfessionalScreen() {
     createProfessionalRecordAsAdmin,
   } = useAuth();
 
+  const [editHydrating, setEditHydrating] = useState(false);
+
   const [tenantRows, setTenantRows] = useState<TenantPickRow[]>([]);
   const [adminScopeTenantId, setAdminScopeTenantId] = useState('');
   const [cities, setCities] = useState<CityRow[]>([]);
-  const [professionNames, setProfessionNames] = useState<string[]>([]);
+  const [professionRows, setProfessionRows] = useState<ProfCatalogRow[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
 
   const [form, setForm] = useState(emptyForm);
@@ -123,6 +147,7 @@ export default function AdminAddProfessionalScreen() {
   };
 
   const [selectedCityId, setSelectedCityId] = useState('');
+  const [selectedProfessionId, setSelectedProfessionId] = useState('');
   const [profileDisplayType, setProfileDisplayType] = useState<ProfileDisplayType>('male');
   const [profileImageUri, setProfileImageUri] = useState<string | null>(null);
   const [profileImageBase64, setProfileImageBase64] = useState<string | null>(null);
@@ -139,9 +164,20 @@ export default function AdminAddProfessionalScreen() {
   const updatingFromMapRef = useRef(false);
 
   const [saving, setSaving] = useState(false);
-  const [successVisible, setSuccessVisible] = useState(false);
 
   const effectiveTenantId = isSuperAdmin ? adminScopeTenantId : (authTenantId ?? '');
+
+  useLayoutEffect(() => {
+    navigation.setOptions({
+      title: isEditMode ? 'Επεξεργασία επαγγελματία' : 'Νέος επαγγελματίας',
+    });
+  }, [navigation, isEditMode]);
+
+  useEffect(() => {
+    if (!isEditMode || isSuperAdmin) return;
+    Alert.alert('Πρόσβαση', 'Η επεξεργασία επαγγελματία είναι διαθέσιμη μόνο για Super Admin.');
+    navigation.goBack();
+  }, [isEditMode, isSuperAdmin, navigation]);
 
   useEffect(() => {
     if (!isSuperAdmin || !canAccessAdminDashboard) return;
@@ -172,54 +208,65 @@ export default function AdminAddProfessionalScreen() {
     }
   }, [isSuperAdmin, authTenantId]);
 
-  const loadCatalog = useCallback(async (tid: string) => {
-    if (!tid) {
-      setCities([]);
-      setProfessionNames([]);
-      return;
-    }
-    setCatalogLoading(true);
-    try {
-      const [cSnap, pSnap] = await Promise.all([
-        getDocs(query(collection(db, 'cities'), where('tenantId', '==', tid))),
-        getDocs(query(collection(db, 'professions'), where('tenantId', '==', tid))),
-      ]);
-      const cityList: CityRow[] = cSnap.docs
-        .map((d) => {
-          const x = d.data() as {
-            name?: string;
-            latitude?: number;
-            longitude?: number;
-            country?: string;
-          };
-          const lat = typeof x.latitude === 'number' ? x.latitude : NaN;
-          const lng = typeof x.longitude === 'number' ? x.longitude : NaN;
-          return {
-            id: d.id,
-            name: String(x.name ?? d.id).trim(),
-            country: String(x.country ?? 'Ελλάδα'),
-            latitude: lat,
-            longitude: lng,
-          };
-        })
-        .filter((c) => c.name.length > 0)
-        .sort((a, b) => a.name.localeCompare(b.name, 'el'));
+  const loadCatalog = useCallback(
+    async (
+      tid: string
+    ): Promise<{ cities: CityRow[]; professionRows: ProfCatalogRow[] } | null> => {
+      if (!tid) {
+        setCities([]);
+        setProfessionRows([]);
+        return null;
+      }
+      setCatalogLoading(true);
+      try {
+        const [cSnap, pSnap] = await Promise.all([
+          getDocs(query(collection(db, 'cities'), where('tenantId', '==', tid))),
+          getDocs(query(collection(db, 'professions'), where('tenantId', '==', tid))),
+        ]);
+        const cityList: CityRow[] = cSnap.docs
+          .map((d) => {
+            const x = d.data() as {
+              name?: string;
+              latitude?: number;
+              longitude?: number;
+              country?: string;
+            };
+            const lat = typeof x.latitude === 'number' ? x.latitude : NaN;
+            const lng = typeof x.longitude === 'number' ? x.longitude : NaN;
+            return {
+              id: d.id,
+              name: String(x.name ?? d.id).trim(),
+              country: String(x.country ?? 'Ελλάδα'),
+              latitude: lat,
+              longitude: lng,
+            };
+          })
+          .filter((c) => c.name.length > 0)
+          .sort((a, b) => a.name.localeCompare(b.name, 'el'));
 
-      const profList = pSnap.docs
-        .map((d) => String((d.data() as { name?: string }).name ?? d.id).trim())
-        .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b, 'el'));
+        const profRowsList: ProfCatalogRow[] = pSnap.docs
+          .map((d) => {
+            const x = d.data() as { name?: string };
+            const name = String(x.name ?? d.id).trim();
+            return { id: d.id, name };
+          })
+          .filter((r) => r.name.length > 0)
+          .sort((a, b) => a.name.localeCompare(b.name, 'el'));
 
-      setCities(cityList);
-      setProfessionNames(profList);
-    } catch (e) {
-      Alert.alert('Σφάλμα', e instanceof Error ? e.message : 'Firestore');
-      setCities([]);
-      setProfessionNames([]);
-    } finally {
-      setCatalogLoading(false);
-    }
-  }, []);
+        setCities(cityList);
+        setProfessionRows(profRowsList);
+        return { cities: cityList, professionRows: profRowsList };
+      } catch (e) {
+        Alert.alert('Σφάλμα', e instanceof Error ? e.message : 'Firestore');
+        setCities([]);
+        setProfessionRows([]);
+        return null;
+      } finally {
+        setCatalogLoading(false);
+      }
+    },
+    []
+  );
 
   useEffect(() => {
     void loadCatalog(effectiveTenantId);
@@ -235,19 +282,126 @@ export default function AdminAddProfessionalScreen() {
     [cities]
   );
 
-  const professionOptions: SearchableSelectOption[] = useMemo(
-    () =>
-      professionNames.map((n) => ({
-        value: n,
-        label: professionDisplayForStored(n).label,
-      })),
-    [professionNames]
-  );
+  const professionOptions: SearchableSelectOption[] = useMemo(() => {
+    const base = professionRows.map((r) => ({
+      value: r.id,
+      label: professionDisplayForStored(r.name).label,
+    }));
+    const p = form.profession.trim();
+    if (p && !professionRows.some((r) => r.name === p)) {
+      return [{ value: `__legacy__:${p}`, label: `${p} (αποθηκευμένο)` }, ...base];
+    }
+    return base;
+  }, [professionRows, form.profession]);
+
+  const professionSelectValue = useMemo(() => {
+    if (selectedProfessionId.trim()) return selectedProfessionId;
+    const p = form.profession.trim();
+    if (!p) return '';
+    const row = professionRows.find((r) => r.name === p);
+    if (row) return row.id;
+    return `__legacy__:${p}`;
+  }, [selectedProfessionId, form.profession, professionRows]);
 
   const moveMapTo = useCallback((lat: number, lng: number, mode: 'wide' | 'precise' = 'precise') => {
     const d = mode === 'wide' ? MAP_DELTA_WIDE : MAP_DELTA_PRECISE;
     setRegion({ latitude: lat, longitude: lng, ...d });
   }, []);
+
+  useEffect(() => {
+    if (!isEditMode || !editId || !isSuperAdmin || !editSource) return;
+    let cancelled = false;
+    (async () => {
+      setEditHydrating(true);
+      try {
+        const coll = editSource === 'imported' ? 'importedProfessionals' : 'users';
+        const snap = await getDoc(doc(db, coll, editId));
+        if (cancelled) return;
+        if (!snap.exists()) {
+          Alert.alert('Δεν βρέθηκε', 'Το έγγραφο δεν υπάρχει.');
+          navigation.goBack();
+          return;
+        }
+        const raw = snap.data() as Record<string, unknown>;
+        const tid = String(raw.tenantId ?? '').trim();
+        if (!tid) {
+          Alert.alert('Έλεγχος', 'Λείπει tenantId στο έγγραφο.');
+          return;
+        }
+        setAdminScopeTenantId(tid);
+        const loaded = await loadCatalog(tid);
+        if (cancelled || !loaded) return;
+
+        const pro: Professional =
+          editSource === 'imported'
+            ? mapImportedProfessionalDoc(editId, raw)
+            : (normalizeUserProfileFromFirestore(editId, raw) as Professional);
+
+        const cityRow = loaded.cities.find((c) => c.name === pro.city);
+        setSelectedCityId(pro.cityId ?? cityRow?.id ?? '');
+        setSelectedProfessionId(
+          pro.professionId ??
+            loaded.professionRows.find((r) => r.name === pro.profession)?.id ??
+            ''
+        );
+        setProfileDisplayType(pro.profileDisplayType ?? 'male');
+        const svc = pro.services?.[0];
+        setForm({
+          firstName: pro.firstName ?? '',
+          lastName: pro.lastName ?? '',
+          email: pro.email ?? '',
+          phone: pro.phone ?? '',
+          businessName: pro.businessName ?? '',
+          vat: pro.vat ?? '',
+          profession: pro.profession ?? '',
+          website: pro.website ?? '',
+          bio: pro.bio ?? '',
+          address: pro.address ?? '',
+          addressNumber: pro.addressNumber ?? '',
+          area: pro.area ?? '',
+          zip: pro.zip ?? '',
+          city: pro.city ?? '',
+          country: pro.country || 'Ελλάδα',
+          serviceName: svc?.name ?? '',
+          serviceDesc: svc?.desc ?? '',
+          servicePriceBasis: svc?.priceBasis ?? 'fixed',
+          serviceTimeEstimate: svc?.timeEstimate ?? '',
+          servicePrice:
+            svc && typeof svc.price === 'number' && svc.price > 0 ? String(svc.price) : '',
+        });
+        const coords = finiteCoordsOrUndefined(pro.latitude, pro.longitude);
+        if (coords) {
+          setLatitude(coords.latitude);
+          setLongitude(coords.longitude);
+          moveMapTo(coords.latitude, coords.longitude, 'precise');
+        }
+        const rawImg = raw.profileImageBase64;
+        const fromRaw = typeof rawImg === 'string' && rawImg.trim() !== '' ? rawImg.trim() : null;
+        const fromPro =
+          pro.profileImageBase64 != null &&
+          typeof pro.profileImageBase64 === 'string' &&
+          pro.profileImageBase64.trim() !== ''
+            ? pro.profileImageBase64.trim()
+            : null;
+        const img = fromRaw ?? fromPro;
+        if (img) {
+          setProfileImageBase64(img);
+          setProfileImageUri(`data:image/jpeg;base64,${img}`);
+        } else {
+          setProfileImageBase64(null);
+          setProfileImageUri(null);
+        }
+      } catch (e) {
+        Alert.alert('Σφάλμα', e instanceof Error ? e.message : '');
+        navigation.goBack();
+      } finally {
+        if (!cancelled) setEditHydrating(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditMode, editId, editSource, isSuperAdmin, loadCatalog, moveMapTo, navigation]);
 
   const applyReverseGeocode = useCallback(async (lat: number, lng: number) => {
     updatingFromMapRef.current = true;
@@ -417,16 +571,10 @@ export default function AdminAddProfessionalScreen() {
     onPinMoved(lat, lng);
   };
 
-  useEffect(() => {
-    if (successVisible) {
-      const t = setTimeout(() => setSuccessVisible(false), 2800);
-      return () => clearTimeout(t);
-    }
-  }, [successVisible]);
-
   const resetForm = () => {
     setForm(emptyForm());
     setSelectedCityId('');
+    setSelectedProfessionId('');
     setProfileDisplayType('male');
     setProfileImageUri(null);
     setProfileImageBase64(null);
@@ -439,6 +587,10 @@ export default function AdminAddProfessionalScreen() {
   const handleSave = async () => {
     if (!canAccessAdminDashboard) {
       Alert.alert('Δεν επιτρέπεται', 'Χρειάζεσαι δικαιώματα διαχειριστή.');
+      return;
+    }
+    if (isEditMode && (!isSuperAdmin || !editId || !editSource)) {
+      Alert.alert('Πρόσβαση', 'Η επεξεργασία δεν είναι διαθέσιμη.');
       return;
     }
     if (!effectiveTenantId) {
@@ -501,6 +653,96 @@ export default function AdminAddProfessionalScreen() {
 
     setSaving(true);
     try {
+      const resolvedProfessionId =
+        selectedProfessionId.trim() ||
+        professionRows.find((r) => normCatalogKey(r.name) === normCatalogKey(profession.trim()))?.id ||
+        '';
+      const resolvedCityId = selectedCityId.trim();
+
+      if (isEditMode && editId && editSource && isSuperAdmin) {
+        const emailNorm = email.trim() ? normalizeEmailForCompare(email.trim()) : '';
+        const estimate = form.serviceTimeEstimate.trim();
+        const priceNum = parseFloat(form.servicePrice.replace(',', '.')) || 0;
+        const service: Service =
+          form.serviceName.trim() || form.serviceDesc.trim() || priceNum > 0 || estimate
+            ? {
+                name: form.serviceName.trim() || 'Υπηρεσία',
+                desc: form.serviceDesc.trim(),
+                price: priceNum,
+                priceBasis: form.servicePriceBasis,
+                ...(estimate ? { timeEstimate: estimate } : {}),
+              }
+            : { name: '', desc: '', price: 0, priceBasis: 'fixed' };
+
+        if (editSource === 'imported') {
+          await updateDoc(doc(db, 'importedProfessionals', editId), {
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            businessName: businessName.trim(),
+            email: emailNorm,
+            phone: phone.trim(),
+            vat: vat.trim(),
+            profession: profession.trim(),
+            ...(resolvedProfessionId ? { professionId: resolvedProfessionId } : {}),
+            city: city.trim(),
+            ...(resolvedCityId ? { cityId: resolvedCityId } : {}),
+            country: form.country.trim() || 'Ελλάδα',
+            address: address.trim(),
+            addressNumber: form.addressNumber.trim(),
+            area: form.area.trim(),
+            zip: form.zip.trim(),
+            website: form.website.trim(),
+            bio: form.bio.trim(),
+            serviceName: form.serviceName.trim(),
+            serviceDesc: form.serviceDesc.trim(),
+            servicePriceBasis: form.servicePriceBasis,
+            servicePrice: priceNum,
+            serviceTimeEstimate: estimate,
+            profileDisplayType,
+            latitude,
+            longitude,
+            tenantId: effectiveTenantId.trim(),
+            profileImageBase64:
+              profileImageBase64 != null && String(profileImageBase64).trim() !== ''
+                ? profileImageBase64
+                : null,
+          });
+        } else {
+          await updateDoc(doc(db, 'users', editId), {
+            email: emailNorm,
+            firstName: firstName.trim(),
+            lastName: lastName.trim(),
+            phone: phone.trim(),
+            profession: profession.trim(),
+            ...(resolvedProfessionId ? { professionId: resolvedProfessionId } : {}),
+            location: `${city.trim()}, ${form.country.trim() || 'Ελλάδα'}`,
+            businessName: businessName.trim(),
+            vat: vat.trim(),
+            website: form.website.trim(),
+            bio: form.bio.trim(),
+            address: address.trim(),
+            addressNumber: form.addressNumber.trim(),
+            area: form.area.trim(),
+            zip: form.zip.trim(),
+            city: city.trim(),
+            ...(resolvedCityId ? { cityId: resolvedCityId } : {}),
+            country: form.country.trim() || 'Ελλάδα',
+            profileDisplayType,
+            profileImageBase64:
+              profileImageBase64 != null && String(profileImageBase64).trim() !== ''
+                ? profileImageBase64
+                : null,
+            latitude,
+            longitude,
+            services: service.name ? [service] : [],
+            tenantId: effectiveTenantId.trim(),
+          });
+        }
+        Alert.alert('Επιτυχία', 'Οι αλλαγές αποθηκεύτηκαν.');
+        navigation.goBack();
+        return;
+      }
+
       await createProfessionalRecordAsAdmin({
         tenantId: effectiveTenantId,
         firstName: firstName.trim(),
@@ -508,6 +750,7 @@ export default function AdminAddProfessionalScreen() {
         email: email.trim(),
         phone: phone.trim(),
         profession: profession.trim(),
+        ...(resolvedProfessionId ? { professionId: resolvedProfessionId } : {}),
         location: `${city.trim()}, ${form.country.trim() || 'Ελλάδα'}`,
         businessName: businessName.trim(),
         vat: vat.trim(),
@@ -518,6 +761,7 @@ export default function AdminAddProfessionalScreen() {
         area: form.area.trim(),
         zip: form.zip.trim(),
         city: city.trim(),
+        ...(resolvedCityId ? { cityId: resolvedCityId } : {}),
         country: form.country.trim() || 'Ελλάδα',
         profileDisplayType,
         profileImageBase64: profileImageBase64 ?? null,
@@ -530,9 +774,14 @@ export default function AdminAddProfessionalScreen() {
         servicePrice: parseFloat(form.servicePrice.replace(',', '.')) || 0,
       });
       resetForm();
-      setSuccessVisible(true);
+      Alert.alert(
+        'Επιτυχία',
+        `Η καταχώρηση ολοκληρώθηκε. Ο επαγγελματίας αποθηκεύτηκε στο tenant «${effectiveTenantId}».\n\n` +
+          'Στην αναζήτηση εμφανίζεται μόνο σε χρήστες με το ίδιο tenantId στο προφίλ τους (και σε Super Admin). ' +
+          'Το accountStatus «trial» σημαίνει δωρεάν δοκιμαστική περίοδο ~30 ημερών· μετά το σύστημα μπορεί να τον θέσει «deactivated» αν δεν υπάρχει συνδρομή.'
+      );
     } catch (e) {
-      Alert.alert('Σφάλμα', e instanceof Error ? e.message : 'Αποτυχία αποθήκευσης');
+      Alert.alert('Αποτυχία καταχώρησης', e instanceof Error ? e.message : 'Άγνωστο σφάλμα.');
     } finally {
       setSaving(false);
     }
@@ -550,19 +799,32 @@ export default function AdminAddProfessionalScreen() {
 
   const tenantPicker =
     isSuperAdmin && tenantRows.length > 0 ? (
-      <View style={styles.block}>
-        <FormSelect
-          label="Tenant (δίκτυο)"
-          value={selectedTenantRow ? tenantOptionLabel(selectedTenantRow) : ''}
-          options={tenantRows.map(tenantOptionLabel)}
-          onChange={(label) => setAdminScopeTenantId(parseTenantIdFromOption(label))}
-          placeholder="Επίλεξε tenant"
-        />
-        <Text style={styles.hint}>
-          Πόλεις / επάγγελμα φορτώνονται από Firestore για αυτόν τον tenant. Η καταχώρηση είναι ισοδύναμη με την
-          εγγραφή επαγγελματία (χωρίς κωδικό σύνδεσης).
-        </Text>
-      </View>
+      isEditMode ? (
+        <View style={styles.block}>
+          <Text style={styles.sectionLabel}>Tenant (δίκτυο)</Text>
+          <Text style={styles.hint}>
+            Στην επεξεργασία ο tenant παραμένει όπως στο έγγραφο (για συνέπεια με πόλεις / επαγγέλματα).
+          </Text>
+          <View style={styles.countryRow}>
+            <Text style={styles.countryLabel}>tenantId</Text>
+            <Text style={styles.countryValue}>{effectiveTenantId || '—'}</Text>
+          </View>
+        </View>
+      ) : (
+        <View style={styles.block}>
+          <FormSelect
+            label="Tenant (δίκτυο)"
+            value={selectedTenantRow ? tenantOptionLabel(selectedTenantRow) : ''}
+            options={tenantRows.map(tenantOptionLabel)}
+            onChange={(label) => setAdminScopeTenantId(parseTenantIdFromOption(label))}
+            placeholder="Επίλεξε tenant"
+          />
+          <Text style={styles.hint}>
+            Πόλεις / επάγγελμα φορτώνονται από Firestore για αυτόν τον tenant. Η καταχώρηση είναι ισοδύναμη με την
+            εγγραφή επαγγελματία (χωρίς κωδικό σύνδεσης).
+          </Text>
+        </View>
+      )
     ) : isSuperAdmin && tenantRows.length === 0 ? (
       <Text style={styles.warn}>
         Δεν υπάρχουν tenants. Δημιούργησε έναν από το Super Admin Dashboard (π.χ. tenant_default).
@@ -579,28 +841,31 @@ export default function AdminAddProfessionalScreen() {
         contentContainerStyle={styles.section}
         keyboardShouldPersistTaps="handled"
       >
-        {successVisible ? (
-          <View style={styles.toast}>
-            <Text style={styles.toastText}>Αποθηκεύτηκε ο επαγγελματίας. Μπορείς να προσθέσεις επόμενο.</Text>
+        <Text style={styles.title}>{isEditMode ? 'Επεξεργασία επαγγελματία' : 'Προσθήκη επαγγελματία'}</Text>
+        <Text style={styles.sub}>
+          {isEditMode
+            ? 'Ενημέρωση στοιχείων όπως στην εγγραφή επαγγελματία. Οι αλλαγές αποθηκεύονται με update στο Firestore.'
+            : 'Ίδια πεδία με την αρχική εγγραφή επαγγελματία. Ρόλος στη βάση: '}
+          {!isEditMode ? (
+            <>
+              <Text style={styles.mono}>pro</Text>. Πόλη & επάγγελμα μόνο από τις συλλογές Firestore του tenant.
+            </>
+          ) : null}
+        </Text>
+        {!isEditMode ? (
+          <View style={styles.trialBanner}>
+            <Text style={styles.trialBannerTitle}>Δοκιμαστική περίοδος (trial)</Text>
+            <Text style={styles.trialBannerText}>
+              Στη βάση εμφανίζονται trialEndDate και accountStatus «trial»: ο επαγγελματίας θεωρείται σε δωρεάν
+              δοκιμή (περίπου 30 ημέρες). Μετά μπορεί να αλλάξει σε «subscribed» ή «deactivated» ανά λογική
+              συνδρομής. Δεν δημιουργείται λογαριασμός σύνδεσης Firebase (κωδικός) από αυτή την οθόνη.
+            </Text>
           </View>
         ) : null}
 
-        <Text style={styles.title}>Προσθήκη επαγγελματία</Text>
-        <Text style={styles.sub}>
-          Ίδια πεδία με την αρχική εγγραφή επαγγελματία. Ρόλος στη βάση:{' '}
-          <Text style={styles.mono}>pro</Text>. Πόλη & επάγγελμα μόνο από τις συλλογές Firestore του tenant.
-        </Text>
-        <View style={styles.trialBanner}>
-          <Text style={styles.trialBannerTitle}>Δοκιμαστική περίοδος 30 ημερών</Text>
-          <Text style={styles.trialBannerText}>
-            Όπως στην εγγραφή: αποθηκεύονται trialEndDate και accountStatus trial — χωρίς δημιουργία λογαριασμού
-            σύνδεσης (κωδικός).
-          </Text>
-        </View>
-
         {tenantPicker}
 
-        {catalogLoading ? (
+        {editHydrating || catalogLoading ? (
           <ActivityIndicator style={{ marginVertical: 16 }} color="#059669" />
         ) : null}
 
@@ -623,7 +888,7 @@ export default function AdminAddProfessionalScreen() {
                 profileDisplayType === key && styles.profileTypeChipActive,
               ]}
               onPress={() => setProfileDisplayType(key)}
-              disabled={saving}
+              disabled={saving || editHydrating}
             >
               <Text
                 style={[
@@ -638,7 +903,11 @@ export default function AdminAddProfessionalScreen() {
         </View>
 
         <Text style={[styles.sectionLabel, { marginTop: 16 }]}>Φωτογραφία προφίλ</Text>
-        <TouchableOpacity style={styles.photoButton} onPress={() => void pickImage()} disabled={saving}>
+        <TouchableOpacity
+          style={styles.photoButton}
+          onPress={() => void pickImage()}
+          disabled={saving || editHydrating}
+        >
           {profileImageUri ? (
             <Image source={{ uri: profileImageUri }} style={styles.photoPreview} />
           ) : (
@@ -663,7 +932,7 @@ export default function AdminAddProfessionalScreen() {
           placeholderTextColor="#94a3b8"
           value={form.address}
           onChangeText={(v) => updateField('address', v)}
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <TextInput
           style={styles.input}
@@ -671,7 +940,7 @@ export default function AdminAddProfessionalScreen() {
           placeholderTextColor="#94a3b8"
           value={form.addressNumber}
           onChangeText={(v) => updateField('addressNumber', v)}
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <TextInput
           style={styles.input}
@@ -679,7 +948,7 @@ export default function AdminAddProfessionalScreen() {
           placeholderTextColor="#94a3b8"
           value={form.area}
           onChangeText={(v) => updateField('area', v)}
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <SearchableSelect
           label="Πόλη * (από Firestore)"
@@ -687,9 +956,14 @@ export default function AdminAddProfessionalScreen() {
           options={cityOptions}
           onChange={handleCityIdChange}
           placeholder={cities.length ? 'Επίλεξε πόλη' : 'Άδεια λίστα — γέμισε πόλεις στο Admin'}
-          disabled={saving || !effectiveTenantId || cities.length === 0}
+          disabled={saving || editHydrating || !effectiveTenantId || cities.length === 0}
           searchPlaceholder="Αναζήτηση πόλης…"
         />
+        {isEditMode && form.city.trim() && !selectedCityId ? (
+          <Text style={styles.cityMismatchHint}>
+            Η αποθηκευμένη πόλη «{form.city}» δεν ταιριάζει με τον τρέχοντα κατάλογο — επίλεξε πόλη από τη λίστα.
+          </Text>
+        ) : null}
         <TextInput
           style={styles.input}
           placeholder="ΤΚ *"
@@ -697,7 +971,7 @@ export default function AdminAddProfessionalScreen() {
           value={form.zip}
           onChangeText={(v) => updateField('zip', v)}
           keyboardType="number-pad"
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <View style={styles.countryRow}>
           <Text style={styles.countryLabel}>Χώρα</Text>
@@ -705,9 +979,9 @@ export default function AdminAddProfessionalScreen() {
         </View>
 
         <TouchableOpacity
-          style={[styles.verifyButton, (saving || geocoding) && styles.buttonDisabled]}
+          style={[styles.verifyButton, (saving || geocoding || editHydrating) && styles.buttonDisabled]}
           onPress={() => void verifyAddress()}
-          disabled={saving || geocoding}
+          disabled={saving || geocoding || editHydrating}
         >
           {geocoding ? (
             <ActivityIndicator color="#fff" />
@@ -737,13 +1011,15 @@ export default function AdminAddProfessionalScreen() {
           <TouchableOpacity
             style={styles.locationButton}
             onPress={() => void useCurrentLocation()}
-            disabled={saving}
+            disabled={saving || editHydrating}
           >
             <MapPin size={20} color="#fff" />
             <Text style={styles.locationButtonText}>Τρέχουσα τοποθεσία</Text>
           </TouchableOpacity>
         </View>
-        {(geocoding || saving) && <Text style={styles.coordsText}>Ενημέρωση τοποθεσίας…</Text>}
+        {(geocoding || saving || editHydrating) && (
+          <Text style={styles.coordsText}>Ενημέρωση τοποθεσίας…</Text>
+        )}
         {latitude != null && longitude != null && !geocoding && (
           <Text style={styles.coordsText}>
             Τελικές συντεταγμένες: {latitude.toFixed(6)}, {longitude.toFixed(6)}
@@ -758,7 +1034,7 @@ export default function AdminAddProfessionalScreen() {
           value={form.firstName}
           onChangeText={(v) => updateField('firstName', v)}
           autoCapitalize="words"
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <TextInput
           style={styles.input}
@@ -767,7 +1043,7 @@ export default function AdminAddProfessionalScreen() {
           value={form.lastName}
           onChangeText={(v) => updateField('lastName', v)}
           autoCapitalize="words"
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <TextInput
           style={styles.input}
@@ -777,7 +1053,7 @@ export default function AdminAddProfessionalScreen() {
           onChangeText={(v) => updateField('email', v)}
           keyboardType="email-address"
           autoCapitalize="none"
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <TextInput
           style={styles.input}
@@ -786,7 +1062,7 @@ export default function AdminAddProfessionalScreen() {
           value={form.phone}
           onChangeText={(v) => updateField('phone', v)}
           keyboardType="phone-pad"
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
 
         <Text style={[styles.sectionLabel, { marginTop: 16 }]}>Στοιχεία επιχείρησης</Text>
@@ -796,7 +1072,7 @@ export default function AdminAddProfessionalScreen() {
           placeholderTextColor="#94a3b8"
           value={form.businessName}
           onChangeText={(v) => updateField('businessName', v)}
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <TextInput
           style={styles.input}
@@ -806,17 +1082,26 @@ export default function AdminAddProfessionalScreen() {
           onChangeText={(v) => updateField('vat', v)}
           keyboardType="number-pad"
           maxLength={9}
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <SearchableSelect
           label="Επάγγελμα * (από Firestore)"
-          value={form.profession}
+          value={professionSelectValue}
           options={professionOptions}
-          onChange={(v) => updateField('profession', v)}
+          onChange={(v) => {
+            if (v.startsWith('__legacy__:')) {
+              setSelectedProfessionId('');
+              updateField('profession', v.slice('__legacy__:'.length));
+              return;
+            }
+            setSelectedProfessionId(v);
+            const row = professionRows.find((r) => r.id === v);
+            updateField('profession', row?.name ?? '');
+          }}
           placeholder={
-            professionNames.length ? 'Επίλεξε επάγγελμα' : 'Άδεια λίστα — γέμισε επαγγέλματα στο Admin'
+            professionRows.length ? 'Επίλεξε επάγγελμα' : 'Άδεια λίστα — γέμισε επαγγέλματα στο Admin'
           }
-          disabled={saving || !effectiveTenantId || professionNames.length === 0}
+          disabled={saving || editHydrating || !effectiveTenantId || professionRows.length === 0}
           searchPlaceholder="Αναζήτηση επαγγέλματος…"
         />
         <TextInput
@@ -827,7 +1112,7 @@ export default function AdminAddProfessionalScreen() {
           onChangeText={(v) => updateField('website', v)}
           keyboardType="url"
           autoCapitalize="none"
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <TextInput
           style={[styles.input, styles.textArea]}
@@ -837,7 +1122,7 @@ export default function AdminAddProfessionalScreen() {
           onChangeText={(v) => updateField('bio', v)}
           multiline
           numberOfLines={3}
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
 
         <Text style={[styles.sectionLabel, { marginTop: 16 }]}>Υπηρεσία (προαιρετικό)</Text>
@@ -850,7 +1135,7 @@ export default function AdminAddProfessionalScreen() {
           placeholderTextColor="#94a3b8"
           value={form.serviceName}
           onChangeText={(v) => updateField('serviceName', v)}
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <TextInput
           style={[styles.input, styles.textArea]}
@@ -859,7 +1144,7 @@ export default function AdminAddProfessionalScreen() {
           value={form.serviceDesc}
           onChangeText={(v) => updateField('serviceDesc', v)}
           multiline
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <Text style={styles.subSectionLabel}>Τρόπος χρέωσης</Text>
         <View style={styles.profileTypeRow}>
@@ -876,7 +1161,7 @@ export default function AdminAddProfessionalScreen() {
                   servicePriceBasis: key,
                 }))
               }
-              disabled={saving}
+              disabled={saving || editHydrating}
             >
               <Text
                 style={[
@@ -896,7 +1181,7 @@ export default function AdminAddProfessionalScreen() {
           value={form.servicePrice}
           onChangeText={(v) => updateField('servicePrice', v)}
           keyboardType="decimal-pad"
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
         <TextInput
           style={[styles.input, styles.textArea]}
@@ -905,18 +1190,20 @@ export default function AdminAddProfessionalScreen() {
           value={form.serviceTimeEstimate}
           onChangeText={(v) => updateField('serviceTimeEstimate', v)}
           multiline
-          editable={!saving}
+          editable={!(saving || editHydrating)}
         />
 
         <TouchableOpacity
-          style={[styles.primary, saving && styles.primaryDisabled]}
+          style={[styles.primary, (saving || editHydrating) && styles.primaryDisabled]}
           onPress={() => void handleSave()}
-          disabled={saving}
+          disabled={saving || editHydrating}
         >
           {saving ? (
             <ActivityIndicator color="#fff" />
           ) : (
-            <Text style={styles.primaryText}>Αποθήκευση επαγγελματία</Text>
+            <Text style={styles.primaryText}>
+              {isEditMode ? 'Ενημέρωση επαγγελματία' : 'Αποθήκευση επαγγελματία'}
+            </Text>
           )}
         </TouchableOpacity>
       </ScrollView>
@@ -947,6 +1234,12 @@ const styles = StyleSheet.create({
   hint: { fontSize: 12, color: '#64748b', marginBottom: 8, lineHeight: 18 },
   hintSmall: { fontSize: 11, color: '#94a3b8', marginBottom: 8, lineHeight: 16 },
   geocodeHint: { fontSize: 12, color: '#2563eb', marginBottom: 8, lineHeight: 18 },
+  cityMismatchHint: {
+    fontSize: 12,
+    color: '#b45309',
+    marginBottom: 10,
+    lineHeight: 18,
+  },
   sectionLabel: { fontSize: 14, fontWeight: '600', color: '#475569', marginBottom: 4 },
   subSectionLabel: {
     fontSize: 13,
@@ -1046,13 +1339,4 @@ const styles = StyleSheet.create({
   },
   primaryDisabled: { opacity: 0.7 },
   primaryText: { color: '#fff', fontWeight: '700', fontSize: 16 },
-  toast: {
-    backgroundColor: '#d1fae5',
-    borderWidth: 1,
-    borderColor: '#6ee7b7',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 16,
-  },
-  toastText: { color: '#065f46', fontSize: 14, fontWeight: '600', textAlign: 'center' },
 });

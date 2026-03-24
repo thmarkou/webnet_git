@@ -81,6 +81,13 @@ export function normalizeUserProfileFromFirestore(
     data.pendingRequests = [];
   }
 
+  const fav = data.favorites;
+  if (Array.isArray(fav)) {
+    data.favorites = fav.filter((x): x is string => typeof x === 'string');
+  } else {
+    data.favorites = [];
+  }
+
   return { uid, ...data } as User | Professional;
 }
 

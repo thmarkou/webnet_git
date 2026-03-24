@@ -1,7 +1,8 @@
 /**
- * Admin: CRUD cities / professions, λίστες Firestore ανά tenant, autocomplete, anti-duplicate,
- * catalog merge ξεχωριστά: μόνο πόλεις ή μόνο επαγγέλματα (μόνο νέα ονόματα), Excel import με geocode ανά γραμμή.
- * Πόλεις: Verify → συντεταγμένες + χάρτης → Save.
+ * Διαχείριση βάσης (tenant): CRUD πόλεις / επαγγέλματα με tenantId — για ηγέτη ομάδας (Tenant Admin) και Super Admin.
+ * Φίλτρο ανά tenant: κάθε ομάδα βλέπει μόνο δικά της δεδομένα. Διπλότυπα μπλοκάρονται· διαγραφή πόλης/επαγγέλματος
+ * μπλοκάρεται αν χρησιμοποιείται από επαγγελματίες (users pro + importedProfessionals) του ίδιου tenant.
+ * Merge από ενσωματωμένο catalog, Excel import (ίδια πεδία με καταχώρηση επαγγελματία + geocode).
  */
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
@@ -34,11 +35,14 @@ import {
   Timestamp,
   query,
   where,
+  limit,
 } from 'firebase/firestore';
 import { useAuth } from '../context/AuthContext';
 import { db } from '../api';
 import { CITIES, PROFESSIONS, type CityOption } from '../constants/data';
 import { FormSelect } from '../components/FormSelect';
+import { isValidGreekPhone } from '../utils/phoneValidation';
+import { parseServicePriceBasisFromImport } from '../utils/servicePricing';
 
 type TabKey = 'cities' | 'professions' | 'bulk';
 
@@ -53,12 +57,53 @@ type CityRow = {
 type ProfRow = { id: string; name: string };
 
 type ExcelRow = {
-  name: string;
+  firstName: string;
+  lastName: string;
+  businessName: string;
+  email: string;
+  phone: string;
+  vat: string;
   profession: string;
   city: string;
+  country: string;
   address: string;
-  phone: string;
+  addressNumber: string;
+  area: string;
+  zip: string;
+  website: string;
+  bio: string;
+  serviceName: string;
+  serviceDesc: string;
+  servicePriceBasis: string;
+  servicePrice: string;
+  serviceTimeEstimate: string;
+  profileDisplayType: string;
 };
+
+function excelEmailValid(s: string): boolean {
+  const t = s.trim();
+  if (!t) return true;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t);
+}
+
+function buildImportGeocodeQuery(parts: {
+  address: string;
+  addressNumber: string;
+  zip: string;
+  area: string;
+  city: string;
+  country: string;
+}): { primary: string; fallback: string } {
+  const streetLine = [parts.address.trim(), parts.addressNumber.trim()].filter(Boolean).join(' ').trim();
+  const locality = [parts.zip.trim(), parts.area.trim(), parts.city.trim()].filter(Boolean).join(', ');
+  const country = parts.country.trim() || 'Ελλάδα';
+  const primary =
+    country === 'Ελλάδα'
+      ? `${streetLine}, ${locality}, Greece`
+      : `${streetLine}, ${locality}, ${country}`;
+  const fallback = `${streetLine}, ${parts.city.trim()}, Greece`;
+  return { primary, fallback };
+}
 
 type GeocodeFailure = { row: number; query: string; reason: string };
 
@@ -72,6 +117,51 @@ function sleep(ms: number): Promise<void> {
 /** Case-insensitive σύγκριση ονόματος πόλης / επαγγέλματος. */
 function normalizeEntryName(s: string): string {
   return s.trim().toLowerCase();
+}
+
+/** Πόσοι επαγγελματίες (users role pro + imported) στον tenant έχουν αυτή την πόλη στο πεδίο city. */
+async function countProsReferencingCity(tenantId: string, cityDisplayName: string): Promise<number> {
+  const target = normalizeEntryName(cityDisplayName);
+  if (!target) return 0;
+  let n = 0;
+  const uSnap = await getDocs(query(collection(db, 'users'), where('tenantId', '==', tenantId)));
+  for (const d of uSnap.docs) {
+    const x = d.data() as { role?: string; city?: string };
+    if (x.role !== 'pro') continue;
+    if (normalizeEntryName(String(x.city ?? '')) === target) n += 1;
+  }
+  const iSnap = await getDocs(
+    query(collection(db, 'importedProfessionals'), where('tenantId', '==', tenantId))
+  );
+  for (const d of iSnap.docs) {
+    const x = d.data() as { city?: string };
+    if (normalizeEntryName(String(x.city ?? '')) === target) n += 1;
+  }
+  return n;
+}
+
+/** Πόσοι επαγγελματίες στον tenant έχουν αυτό το επάγγελμα (κείμενο profession). */
+async function countProsReferencingProfession(
+  tenantId: string,
+  professionDisplayName: string
+): Promise<number> {
+  const target = normalizeEntryName(professionDisplayName);
+  if (!target) return 0;
+  let n = 0;
+  const uSnap = await getDocs(query(collection(db, 'users'), where('tenantId', '==', tenantId)));
+  for (const d of uSnap.docs) {
+    const x = d.data() as { role?: string; profession?: string };
+    if (x.role !== 'pro') continue;
+    if (normalizeEntryName(String(x.profession ?? '')) === target) n += 1;
+  }
+  const iSnap = await getDocs(
+    query(collection(db, 'importedProfessionals'), where('tenantId', '==', tenantId))
+  );
+  for (const d of iSnap.docs) {
+    const x = d.data() as { profession?: string };
+    if (normalizeEntryName(String(x.profession ?? '')) === target) n += 1;
+  }
+  return n;
 }
 
 function slugForCatalogCityLabel(label: string): string {
@@ -151,6 +241,8 @@ export default function AdminDashboardScreen() {
   const [importFailures, setImportFailures] = useState<GeocodeFailure[]>([]);
   const [failuresModalVisible, setFailuresModalVisible] = useState(false);
   const [adminGuideOpen, setAdminGuideOpen] = useState(true);
+  /** Εμφανιζόμενο όνομα ομάδας για Tenant Admin (από tenants). */
+  const [tenantDisplayLabel, setTenantDisplayLabel] = useState('');
 
   const effectiveTenantId = isSuperAdmin ? adminScopeTenantId : (authTenantId ?? '');
 
@@ -203,6 +295,28 @@ export default function AdminDashboardScreen() {
     if (!isSuperAdmin && authTenantId) {
       setAdminScopeTenantId(authTenantId);
     }
+  }, [isSuperAdmin, authTenantId]);
+
+  useEffect(() => {
+    if (isSuperAdmin || !authTenantId) {
+      setTenantDisplayLabel('');
+      return;
+    }
+    void (async () => {
+      try {
+        const tq = query(
+          collection(db, 'tenants'),
+          where('tenantId', '==', authTenantId),
+          limit(1)
+        );
+        const s = await getDocs(tq);
+        const x = s.docs[0]?.data() as { displayName?: string; name?: string } | undefined;
+        const label = String(x?.displayName ?? x?.name ?? '').trim();
+        setTenantDisplayLabel(label || authTenantId);
+      } catch {
+        setTenantDisplayLabel(authTenantId);
+      }
+    })();
   }, [isSuperAdmin, authTenantId]);
 
   useEffect(() => {
@@ -300,8 +414,8 @@ export default function AdminDashboardScreen() {
       Alert.alert(
         'Tenant',
         isSuperAdmin
-          ? 'Επίλεξε tenant (λίστα παραπάνω) ή δημιούργησε έναν από το Super Admin Dashboard.'
-          : 'Το προφίλ σου δεν έχει tenantId.'
+          ? 'Επίλεξε ομάδα (tenant) από τη λίστα παραπάνω ή δημιούργησε tenant από το Super Admin.'
+          : 'Το προφίλ σου δεν έχει tenantId — χωρίς αυτό δεν μπορείς να αποθηκεύσεις πόλεις/επαγγέλματα για την ομάδα σου. Επικοινώνησε με τον διαχειριστή της πλατφόρμας.'
       );
       return null;
     }
@@ -361,7 +475,10 @@ export default function AdminDashboardScreen() {
     if (!tid) return;
 
     if (isDuplicateCityName(name, editingCityId)) {
-      Alert.alert('Διπλότυπο', 'This entry already exists!');
+      Alert.alert(
+        'Διπλότυπο',
+        'Υπάρχει ήδη πόλη με αυτό το όνομα για την ομάδα σου (ίδιο όνομα, χωρίς διάκριση πεζών/κεφαλαίων).'
+      );
       return;
     }
 
@@ -381,6 +498,7 @@ export default function AdminDashboardScreen() {
       }
       clearCityForm();
       await loadAll();
+      refreshFirestoreCatalog();
     } catch (e) {
       Alert.alert('Σφάλμα', e instanceof Error ? e.message : '');
     } finally {
@@ -405,18 +523,41 @@ export default function AdminDashboardScreen() {
   };
 
   const removeCity = (id: string) => {
-    Alert.alert('Διαγραφή πόλης;', undefined, [
+    const row = cities.find((c) => c.id === id);
+    if (!row) return;
+    const tid = effectiveTenantId;
+    if (!tid) {
+      requireWriteTenant();
+      return;
+    }
+    if (row.tenantId && row.tenantId !== tid) {
+      Alert.alert('Έλεγχος', 'Η εγγραφή δεν ανήκει στον tenant που διαχειρίζεσαι τώρα.');
+      return;
+    }
+    Alert.alert('Διαγραφή πόλης;', `Θα διαγραφεί η «${row.name}».`, [
       { text: 'Άκυρο', style: 'cancel' },
       {
         text: 'Διαγραφή',
         style: 'destructive',
         onPress: () => {
           void (async () => {
+            setLoading(true);
             try {
+              const used = await countProsReferencingCity(tid, row.name);
+              if (used > 0) {
+                Alert.alert(
+                  'Δεν επιτρέπεται',
+                  `Η πόλη «${row.name}» χρησιμοποιείται από ${used} επαγγελματία (ή εγγραφή εισαγωγής). Άλλαξε πρώτα την πόλη στα προφίλ τους ή αφαίρεσέ τους.`
+                );
+                return;
+              }
               await deleteDoc(doc(db, 'cities', id));
               await loadAll();
+              refreshFirestoreCatalog();
             } catch (e) {
               Alert.alert('Σφάλμα', e instanceof Error ? e.message : '');
+            } finally {
+              setLoading(false);
             }
           })();
         },
@@ -439,7 +580,10 @@ export default function AdminDashboardScreen() {
     if (!tid) return;
 
     if (isDuplicateProfName(name, editingProfId)) {
-      Alert.alert('Διπλότυπο', 'This entry already exists!');
+      Alert.alert(
+        'Διπλότυπο',
+        'Υπάρχει ήδη επάγγελμα με αυτό το όνομα για την ομάδα σου (ίδιο όνομα, χωρίς διάκριση πεζών/κεφαλαίων).'
+      );
       return;
     }
 
@@ -452,6 +596,7 @@ export default function AdminDashboardScreen() {
       }
       clearProfForm();
       await loadAll();
+      refreshFirestoreCatalog();
     } catch (e) {
       Alert.alert('Σφάλμα', e instanceof Error ? e.message : '');
     } finally {
@@ -460,18 +605,37 @@ export default function AdminDashboardScreen() {
   };
 
   const removeProfession = (id: string) => {
-    Alert.alert('Διαγραφή επαγγέλματος;', undefined, [
+    const row = professions.find((p) => p.id === id);
+    if (!row) return;
+    const tid = effectiveTenantId;
+    if (!tid) {
+      requireWriteTenant();
+      return;
+    }
+    Alert.alert('Διαγραφή επαγγέλματος;', `Θα διαγραφεί το «${row.name}».`, [
       { text: 'Άκυρο', style: 'cancel' },
       {
         text: 'Διαγραφή',
         style: 'destructive',
         onPress: () => {
           void (async () => {
+            setLoading(true);
             try {
+              const used = await countProsReferencingProfession(tid, row.name);
+              if (used > 0) {
+                Alert.alert(
+                  'Δεν επιτρέπεται',
+                  `Το επάγγελμα «${row.name}» χρησιμοποιείται από ${used} επαγγελματία (ή εγγραφή εισαγωγής). Άλλαξε πρώτα το επάγγελμα στα προφίλ τους ή αφαίρεσέ τους.`
+                );
+                return;
+              }
               await deleteDoc(doc(db, 'professions', id));
               await loadAll();
+              refreshFirestoreCatalog();
             } catch (e) {
               Alert.alert('Σφάλμα', e instanceof Error ? e.message : '');
+            } finally {
+              setLoading(false);
             }
           })();
         },
@@ -566,13 +730,70 @@ export default function AdminDashboardScreen() {
 
   const parseExcelRows = (sheet: XLSX.WorkSheet): ExcelRow[] => {
     const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet);
-    return rows.map((row) => ({
-      name: pickCell(row, 'name', 'όνομα', 'επωνυμία', 'businessname'),
-      profession: pickCell(row, 'profession', 'category', 'επάγγελμα'),
-      city: pickCell(row, 'city', 'πόλη'),
-      address: pickCell(row, 'address', 'διεύθυνση'),
-      phone: pickCell(row, 'phone', 'τηλέφωνο', 'tel', 'mobile'),
-    }));
+    return rows.map((row) => {
+      const explicitBusiness = pickCell(
+        row,
+        'businessname',
+        'επωνυμία',
+        'επωνυμια',
+        'company',
+        'tradename'
+      );
+      const legacyEnglishName = pickCell(row, 'name');
+      const onomaGr = pickCell(row, 'όνομα');
+      const firstFromCols = pickCell(row, 'firstname', 'first_name', 'fname', 'first name');
+      const lastFromCols = pickCell(row, 'lastname', 'last_name', 'lname', 'surname', 'επώνυμο', 'επωνυμο');
+
+      let firstName = firstFromCols;
+      let lastName = lastFromCols;
+      let businessName = explicitBusiness || legacyEnglishName;
+
+      /* Παλιό template: μία στήλη «Όνομα» = επωνυμία. Νέο: Όνομα + Επώνυμο + Επωνυμία. */
+      if (!firstFromCols && onomaGr) {
+        if (explicitBusiness || legacyEnglishName || lastFromCols) {
+          firstName = onomaGr;
+        } else {
+          businessName = businessName || onomaGr;
+        }
+      }
+
+      return {
+        firstName,
+        lastName,
+        businessName,
+        email: pickCell(row, 'email', 'e-mail'),
+        phone: pickCell(row, 'phone', 'τηλέφωνο', 'τηλεφωνο', 'tel', 'mobile', 'κινητό', 'κινητο'),
+        vat: pickCell(row, 'vat', 'αφμ', 'afm', 'taxid', 'tax_id'),
+        profession: pickCell(row, 'profession', 'category', 'επάγγελμα', 'επαγγελμα'),
+        city: pickCell(row, 'city', 'πόλη', 'poli'),
+        country: pickCell(row, 'country', 'χώρα', 'χωρα') || 'Ελλάδα',
+        address: pickCell(row, 'address', 'διεύθυνση', 'διευθυνση', 'street', 'οδός', 'οδος'),
+        addressNumber: pickCell(row, 'addressnumber', 'αριθμός', 'αριθμος', 'number', 'no', 'streetnumber'),
+        area: pickCell(row, 'area', 'περιοχή', 'περιοχη', 'district'),
+        zip: pickCell(row, 'zip', 'postalcode', 'postcode', 'τκ', 'tk', 'ταχυδρομικός', 'ταχυδρομικος'),
+        website: pickCell(row, 'website', 'url', 'ιστότοπος', 'ιστοτοπος'),
+        bio: pickCell(row, 'bio', 'περιγραφή', 'περιγραφη', 'description'),
+        serviceName: pickCell(row, 'servicename', 'service_name', 'υπηρεσία', 'υπηρεσια', 'όνομα υπηρεσίας'),
+        serviceDesc: pickCell(row, 'servicedesc', 'service_description', 'περιγραφή υπηρεσίας'),
+        servicePriceBasis: pickCell(row, 'servicepricebasis', 'pricebasis', 'τιμολόγηση', 'τιμολογηση'),
+        servicePrice: pickCell(row, 'serviceprice', 'τιμή', 'τιμη', 'price'),
+        serviceTimeEstimate: pickCell(
+          row,
+          'servicetimeestimate',
+          'timeestimate',
+          'χρόνος',
+          'χρονος',
+          'duration'
+        ),
+        profileDisplayType: pickCell(
+          row,
+          'profiledisplaytype',
+          'τύπος προφίλ',
+          'τυπος προφιλ',
+          'profile_type'
+        ),
+      };
+    });
   };
 
   const runExcelImport = async (rows: ExcelRow[]) => {
@@ -589,23 +810,91 @@ export default function AdminDashboardScreen() {
       const sheetRow = i + 2;
       setImportProgress(`${i + 1} / ${rows.length}`);
 
-      const name = row.name.trim();
+      let firstName = row.firstName.trim();
+      let lastName = row.lastName.trim();
+      const businessName = row.businessName.trim();
+      const email = row.email.trim();
+      const phone = row.phone.trim();
+      const vatDigits = row.vat.replace(/\D/g, '');
       const profession = row.profession.trim();
       const city = row.city.trim();
+      const country = row.country.trim() || 'Ελλάδα';
       const address = row.address.trim();
-      const phone = row.phone.trim();
+      const addressNumber = row.addressNumber.trim();
+      const area = row.area.trim();
+      const zip = row.zip.trim();
 
-      if (!name) {
-        failures.push({ row: sheetRow, query: '', reason: 'Κενό όνομα (Name)' });
+      if (!businessName) {
+        failures.push({ row: sheetRow, query: '', reason: 'Κενή επωνυμία (businessName / Name)' });
         continue;
       }
 
-      const geoQuery = [address, city, 'Greece'].filter((p) => p.length > 0).join(', ');
-      if (!geoQuery || geoQuery === 'Greece') {
+      if (!firstName && !lastName) {
+        const tokens = businessName.split(/\s+/).filter(Boolean);
+        firstName = tokens[0] ?? '';
+        lastName = tokens.length > 1 ? tokens.slice(1).join(' ') : '';
+      }
+
+      if (!firstName.trim() || !lastName.trim()) {
         failures.push({
           row: sheetRow,
-          query: geoQuery || address + city,
-          reason: 'Κενή διεύθυνση ή πόλη',
+          query: '',
+          reason: 'Όνομα και επώνυμο: συμπλήρωσε firstName/lastName ή επωνυμία με 2+ λέξεις',
+        });
+        continue;
+      }
+
+      if (vatDigits.length !== 9) {
+        failures.push({ row: sheetRow, query: '', reason: 'ΑΦΜ: απαιτούνται 9 ψηφία' });
+        continue;
+      }
+
+      if (!address || !addressNumber || !zip) {
+        failures.push({
+          row: sheetRow,
+          query: '',
+          reason: 'Υποχρεωτικά: Οδός (address), Αριθμός (addressNumber), ΤΚ (zip)',
+        });
+        continue;
+      }
+
+      if (!profession) {
+        failures.push({ row: sheetRow, query: '', reason: 'Κενό επάγγελμα' });
+        continue;
+      }
+
+      if (!city) {
+        failures.push({ row: sheetRow, query: '', reason: 'Κενή πόλη' });
+        continue;
+      }
+
+      if (!phone || !isValidGreekPhone(phone)) {
+        failures.push({
+          row: sheetRow,
+          query: '',
+          reason: 'Μη έγκυρο τηλέφωνο (π.χ. κινητό 69xxxxxxxx)',
+        });
+        continue;
+      }
+
+      if (email && !excelEmailValid(email)) {
+        failures.push({ row: sheetRow, query: '', reason: 'Μη έγκυρο email' });
+        continue;
+      }
+
+      const { primary, fallback } = buildImportGeocodeQuery({
+        address,
+        addressNumber,
+        zip,
+        area,
+        city,
+        country,
+      });
+      if (!primary || primary === 'Greece' || primary.startsWith(', ')) {
+        failures.push({
+          row: sheetRow,
+          query: primary,
+          reason: 'Κενή ή ανεπαρκής διεύθυνση για geocode',
         });
         continue;
       }
@@ -613,21 +902,43 @@ export default function AdminDashboardScreen() {
       await sleep(GEOCODE_STAGGER_MS);
 
       try {
-        const geo = await Location.geocodeAsync(geoQuery);
+        let geo = await Location.geocodeAsync(primary);
         if (!geo?.length) {
-          failures.push({ row: sheetRow, query: geoQuery, reason: 'Δεν βρέθηκε συντεταγμένη' });
+          geo = await Location.geocodeAsync(fallback);
+        }
+        if (!geo?.length) {
+          failures.push({ row: sheetRow, query: primary, reason: 'Δεν βρέθηκε συντεταγμένη' });
           continue;
         }
         const { latitude, longitude } = geo[0];
+        const priceParsed = parseFloat(row.servicePrice.replace(',', '.'));
+        const servicePrice = Number.isFinite(priceParsed) ? priceParsed : 0;
+        const basis = parseServicePriceBasisFromImport(row.servicePriceBasis);
+
         await addDoc(collection(db, 'importedProfessionals'), {
-          businessName: name,
+          firstName: firstName.trim(),
+          lastName: lastName.trim(),
+          businessName,
+          email,
+          phone,
+          vat: vatDigits,
           profession,
           city,
+          country,
           address,
-          phone,
+          addressNumber,
+          area,
+          zip,
+          website: row.website.trim(),
+          bio: row.bio.trim(),
+          serviceName: row.serviceName.trim(),
+          serviceDesc: row.serviceDesc.trim(),
+          servicePriceBasis: basis,
+          servicePrice,
+          serviceTimeEstimate: row.serviceTimeEstimate.trim(),
+          profileDisplayType: row.profileDisplayType.trim() || 'male',
           latitude,
           longitude,
-          country: 'Ελλάδα',
           tenantId: tid,
           importedAt: Timestamp.now(),
           source: 'excel_geocode',
@@ -636,7 +947,7 @@ export default function AdminDashboardScreen() {
       } catch (e) {
         failures.push({
           row: sheetRow,
-          query: geoQuery,
+          query: primary,
           reason: e instanceof Error ? e.message : 'Σφάλμα αποθήκευσης/geocode',
         });
       }
@@ -691,7 +1002,7 @@ export default function AdminDashboardScreen() {
 
       Alert.alert(
         'Επιβεβαίωση',
-        `Βρέθηκαν ${parsed.length} γραμμές. Θα γίνει geocode για κάθε διεύθυνση (μπορεί να πάρει λίγα λεπτά). Συνέχεια;`,
+        `Βρέθηκαν ${parsed.length} γραμμές. Έλεγχος πεδίων όπως στην καταχώρηση επαγγελματία + geocode (οδός, αριθμός, ΤΚ, πόλη). Μπορεί να πάρει λίγα λεπτά. Συνέχεια;`,
         [
           { text: 'Άκυρο', style: 'cancel' },
           { text: 'Έναρξη', onPress: () => void runExcelImport(parsed) },
@@ -732,7 +1043,8 @@ export default function AdminDashboardScreen() {
           placeholder="Επίλεξε tenant"
         />
         <Text style={styles.tenantHint}>
-          Ως Super Admin, όλες οι ενέργειες εδώ ισχύουν για τον επιλεγμένο tenant.
+          Ως διαχειριστής πλατφόρμας (Super Admin), επίλεξε ποια ομάδα (tenant) θα επεξεργαστείς· οι πόλεις και τα
+          επαγγέλματα είναι ξεχωριστά ανά tenant.
         </Text>
       </View>
     ) : isSuperAdmin && tenantRows.length === 0 ? (
@@ -748,6 +1060,24 @@ export default function AdminDashboardScreen() {
   return (
     <View style={styles.root}>
       {tenantPicker}
+      {!isSuperAdmin && canAccessAdminDashboard ? (
+        <View style={styles.tenantLeaderBanner}>
+          <Text style={styles.tenantLeaderTitle}>Διαχείριση βάσης για την ομάδα σου</Text>
+          <Text style={styles.tenantLeaderBody}>
+            Πρόσθεσε ή άλλαξε πόλεις και επαγγέλματα· εμφανίζονται μόνο στα dropdowns χρηστών και επαγγελματιών με το
+            ίδιο tenantId. Άλλες ομάδες δεν βλέπουν τα δεδομένα σου.
+          </Text>
+          {effectiveTenantId ? (
+            <Text style={styles.tenantLeaderMono} selectable>
+              {tenantDisplayLabel ? `Ομάδα: ${tenantDisplayLabel}\n` : ''}tenantId: {effectiveTenantId}
+            </Text>
+          ) : (
+            <Text style={styles.warnInline}>
+              Λείπει tenantId στο προφίλ — επικοινώνησε με τον διαχειριστή της πλατφόρμας.
+            </Text>
+          )}
+        </View>
+      ) : null}
       <View style={styles.adminGuideCard}>
         <TouchableOpacity
           style={styles.adminGuideHeader}
@@ -761,21 +1091,23 @@ export default function AdminDashboardScreen() {
           <View style={styles.adminGuideBody}>
             <Text style={styles.adminGuideStep}>
               <Text style={styles.adminGuideNum}>1. </Text>
-              Επίλεξε σωστό tenant (αν είσαι Super Admin). Όλες οι αλλαγές πόλεων/επαγγελμάτων πάνε σε αυτόν τον
-              tenant.
+              Αν είσαι ηγέτης ομάδας (Tenant Admin), δουλεύεις αυτόματα για τον tenantId του προφίλ σου. Αν είσαι Super
+              Admin, επίλεξε πρώτα την ομάδα από τη λίστα πάνω.
             </Text>
             <Text style={styles.adminGuideStep}>
               <Text style={styles.adminGuideNum}>2. </Text>
-              Καρτέλα Cities: «Γέμισμα από ενσωματωμένο catalog (merge)» προσθέτει μόνο πόλεις που λείπουν — όχι
-              επαγγέλματα.
+              Καρτέλα «Πόλεις»: πρόσθεσε χειροκίνητα (επαλήθευση + χάρτης) ή χρησιμοποίησε merge από ενσωματωμένο
+              catalog — μόνο νέα ονόματα, χωρίς διπλότυπα.
             </Text>
             <Text style={styles.adminGuideStep}>
               <Text style={styles.adminGuideNum}>3. </Text>
-              Καρτέλα Professions: το αντίστοιχο κουμπί προσθέτει μόνο επαγγέλματα από το ενσωματωμένο catalog.
+              Καρτέλα «Επαγγέλματα»: ίδια λογική· τα dropdowns εγγραφής επαγγελματία τραβάνε μόνο τις εγγραφές του tenant
+              σου.
             </Text>
             <Text style={styles.adminGuideStep}>
               <Text style={styles.adminGuideNum}>4. </Text>
-              Μπορείς να προσθέτεις/διορθώνεις χειροκίνητα· το merge δεν σβήνει τίποτα, μόνο συμπληρώνει νέα ονόματα.
+              Δεν μπορείς να σβήσεις πόλη ή επάγγελμα αν το χρησιμοποιεί ήδη επαγγελματίας της ομάδας σου — άλλαξε πρώτα
+              τα προφίλ.
             </Text>
           </View>
         ) : null}
@@ -788,7 +1120,7 @@ export default function AdminDashboardScreen() {
             onPress={() => setTab(k)}
           >
             <Text style={[styles.tabText, tab === k && styles.tabTextActive]}>
-              {k === 'cities' ? 'Cities' : k === 'professions' ? 'Professions' : 'Excel Upload'}
+              {k === 'cities' ? 'Πόλεις' : k === 'professions' ? 'Επαγγέλματα' : 'Μαζική εισαγωγή'}
             </Text>
           </TouchableOpacity>
         ))}
@@ -1029,12 +1361,41 @@ export default function AdminDashboardScreen() {
 
       {tab === 'bulk' && (
         <ScrollView contentContainerStyle={styles.section}>
-          <Text style={styles.sectionTitle}>Μαζική εισαγωγή (.xlsx)</Text>
+            <Text style={styles.sectionTitle}>Μαζική εισαγωγή (.xlsx)</Text>
           <Text style={styles.p}>
-            Απαιτούμενες στήλες (κεφαλίδες): <Text style={styles.bold}>Name</Text>,{' '}
-            <Text style={styles.bold}>Profession</Text>, <Text style={styles.bold}>City</Text>,{' '}
-            <Text style={styles.bold}>Address</Text>, <Text style={styles.bold}>Phone</Text>. Δεν χρειάζονται
-            συντεταγμένες — γίνεται αυτόματο geocode για κάθε γραμμή (διεύθυνση + πόλη + Greece).
+            Οι κεφαλίδες πρέπει να ταιριάζουν με την οθόνη «Προσθήκη επαγγελματία» (ίδια πεδία). Οι συντεταγμένες
+            προκύπτουν αυτόματα από geocode.
+          </Text>
+          <Text style={[styles.p, { marginTop: 10 }]}>
+            <Text style={styles.bold}>Υποχρεωτικές στήλες</Text>
+            {'\n'}• <Text style={styles.bold}>firstName</Text> / <Text style={styles.bold}>Όνομα</Text> (όταν υπάρχει
+            και επωνυμία σε άλλη στήλη){'\n'}• <Text style={styles.bold}>lastName</Text> /{' '}
+            <Text style={styles.bold}>Επώνυμο</Text>
+            {'\n'}• <Text style={styles.bold}>businessName</Text> / <Text style={styles.bold}>Επωνυμία</Text> — ή
+            παλιό template: μόνο <Text style={styles.bold}>Name</Text> / <Text style={styles.bold}>Όνομα</Text> ως
+            επωνυμία (τότε όνομα/επώνυμο παράγονται από λέξεις της επωνυμίας){'\n'}•{' '}
+            <Text style={styles.bold}>phone</Text> / <Text style={styles.bold}>Τηλέφωνο</Text> (έγκυρο ελληνικό){'\n'}
+            • <Text style={styles.bold}>vat</Text> / <Text style={styles.bold}>ΑΦΜ</Text> (9 ψηφία){'\n'}•{' '}
+            <Text style={styles.bold}>profession</Text> / <Text style={styles.bold}>Επάγγελμα</Text>
+            {'\n'}• <Text style={styles.bold}>city</Text> / <Text style={styles.bold}>Πόλη</Text>
+            {'\n'}• <Text style={styles.bold}>address</Text> / <Text style={styles.bold}>Οδός</Text>
+            {'\n'}• <Text style={styles.bold}>addressNumber</Text> / <Text style={styles.bold}>Αριθμός</Text>
+            {'\n'}• <Text style={styles.bold}>zip</Text> / <Text style={styles.bold}>ΤΚ</Text>
+          </Text>
+          <Text style={[styles.p, { marginTop: 10 }]}>
+            <Text style={styles.bold}>Προαιρετικές στήλες</Text>
+            {'\n'}• <Text style={styles.bold}>email</Text> (αν συμπληρωθεί, έγκυρη μορφή){'\n'}•{' '}
+            <Text style={styles.bold}>country</Text> / <Text style={styles.bold}>Χώρα</Text> (προεπιλογή Ελλάδα)
+            {'\n'}• <Text style={styles.bold}>area</Text> / <Text style={styles.bold}>Περιοχή</Text>
+            {'\n'}• <Text style={styles.bold}>website</Text>, <Text style={styles.bold}>bio</Text>
+            {'\n'}• Υπηρεσία: <Text style={styles.bold}>serviceName</Text>, <Text style={styles.bold}>serviceDesc</Text>,{' '}
+            <Text style={styles.bold}>servicePrice</Text>, <Text style={styles.bold}>servicePriceBasis</Text> (fixed,
+            per_hour, per_visit, on_quote / ελληνικά συνώνυμα), <Text style={styles.bold}>serviceTimeEstimate</Text>
+            {'\n'}• <Text style={styles.bold}>profileDisplayType</Text>: male, female, company (ή συνώνυμα)
+          </Text>
+          <Text style={[styles.p, { marginTop: 10, color: '#64748b' }]}>
+            Πρώτη γραμμή του φύλλου = κεφαλίδες. Τα ονόματα στηλών γίνονται case-insensitive. Αν λείπουν όνομα/επώνυμο,
+            χρησιμοποίησε επωνυμία με τουλάχιστον δύο λέξεις (πρώτη = όνομα, υπόλοιπο = επώνυμο).
           </Text>
           <TouchableOpacity
             style={[styles.primary, importRunning && styles.primaryDisabled]}
@@ -1055,7 +1416,7 @@ export default function AdminDashboardScreen() {
       <Modal visible={failuresModalVisible} animationType="slide" transparent>
         <View style={styles.modalBackdrop}>
           <View style={styles.modalCard}>
-            <Text style={styles.modalTitle}>Αποτυχημένες διευθύνσεις ({importFailures.length})</Text>
+            <Text style={styles.modalTitle}>Αποτυχίες import ({importFailures.length})</Text>
             <FlatList
               data={importFailures}
               keyExtractor={(_, i) => `f-${i}`}
@@ -1083,6 +1444,26 @@ export default function AdminDashboardScreen() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#f8fafc' },
   tabList: { flex: 1 },
+  tenantLeaderBanner: {
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    padding: 14,
+    backgroundColor: '#eff6ff',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  tenantLeaderTitle: { fontSize: 16, fontWeight: '800', color: '#1e3a8a', marginBottom: 8 },
+  tenantLeaderBody: { fontSize: 13, color: '#1e40af', lineHeight: 20 },
+  tenantLeaderMono: {
+    marginTop: 10,
+    fontSize: 12,
+    color: '#3730a3',
+    fontFamily: Platform.select({ ios: 'Menlo', default: 'monospace' }),
+    lineHeight: 18,
+  },
+  warnInline: { marginTop: 10, fontSize: 13, fontWeight: '600', color: '#b45309', lineHeight: 19 },
   tenantPickerWrap: {
     paddingHorizontal: 16,
     paddingTop: 12,

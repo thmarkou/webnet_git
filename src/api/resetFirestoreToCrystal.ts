@@ -16,6 +16,7 @@ const BATCH_MAX = 500;
 /** Συλλογές που διαγράφονται πριν το system_config. ΔΕΝ σβήνονται: `cities`, `professions`. */
 const ROOT_COLLECTIONS_BEFORE_SYSTEM_CONFIG = [
   'reviews',
+  'deleted_professionals',
   'importedProfessionals',
   'tenants',
   'users',

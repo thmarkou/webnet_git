@@ -12,11 +12,12 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
-import { LogOut, Shield, Trash2, UserPlus } from 'lucide-react-native';
+import { LogOut, Shield, Trash2, UserPlus, Users } from 'lucide-react-native';
 import { AppUiBuildRibbon } from '../components/AppUiBuildRibbon';
 import { navigateToAdminDashboard } from '../utils/navigateToAdminDashboard';
 import { navigateToSuperAdminDashboard } from '../utils/navigateToSuperAdminDashboard';
 import { navigateToAdminAddProfessional } from '../utils/navigateToAdminAddProfessional';
+import { navigateToAdminManageProfessionals } from '../utils/navigateToAdminManageProfessionals';
 import { Crown } from 'lucide-react-native';
 import { db } from '../api';
 import { resetFirestoreToCrystal } from '../api/resetFirestoreToCrystal';
@@ -25,7 +26,7 @@ function AdminButton({ onPress }: { onPress: () => void }) {
   return (
     <TouchableOpacity style={styles.adminButton} onPress={onPress}>
       <Shield size={20} color="#1e3a8a" />
-      <Text style={styles.adminButtonText}>Admin Dashboard</Text>
+      <Text style={styles.adminButtonText}>Διαχείριση βάσης (πόλεις & επαγγέλματα)</Text>
     </TouchableOpacity>
   );
 }
@@ -35,6 +36,15 @@ function SuperAdminButton({ onPress }: { onPress: () => void }) {
     <TouchableOpacity style={styles.superAdminButton} onPress={onPress}>
       <Crown size={20} color="#5b21b6" />
       <Text style={styles.superAdminButtonText}>Super Admin</Text>
+    </TouchableOpacity>
+  );
+}
+
+function ManageProfessionalsButton({ onPress }: { onPress: () => void }) {
+  return (
+    <TouchableOpacity style={styles.manageProButton} onPress={onPress}>
+      <Users size={20} color="#5b21b6" />
+      <Text style={styles.manageProButtonText}>Διαχείριση επαγγελματιών (επεξεργασία & διαγραφή)</Text>
     </TouchableOpacity>
   );
 }
@@ -124,6 +134,9 @@ export default function SettingsScreen() {
       {isSuperAdmin ? (
         <>
           <SuperAdminButton onPress={() => navigateToSuperAdminDashboard(navigation)} />
+          <ManageProfessionalsButton
+            onPress={() => navigateToAdminManageProfessionals(navigation)}
+          />
           <Text style={styles.dangerZoneTitle}>Κίνδυνος — μόνο ανάπτυξη</Text>
           <Text style={styles.dangerZoneHint}>
             Για αλλαγή Super Admin από την αρχή: σβήνει users, tenants, reviews, importedProfessionals,
@@ -151,7 +164,8 @@ export default function SettingsScreen() {
         </>
       ) : (
         <Text style={styles.adminHint}>
-          Admin: Super Admin / Tenant Admin (Firestore tenants) ή legacy EXPO_PUBLIC_ADMIN_EMAIL.
+          Η «Διαχείριση βάσης» (πόλεις / επαγγέλματα) είναι για Tenant Admin ή Super Admin (Firestore tenants / globals)
+          ή legacy EXPO_PUBLIC_ADMIN_EMAIL.
         </Text>
       )}
 
@@ -201,6 +215,19 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   superAdminButtonText: { fontSize: 15, fontWeight: '700', color: '#5b21b6' },
+  manageProButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: '#f5f3ff',
+    borderRadius: 12,
+    paddingVertical: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#ddd6fe',
+  },
+  manageProButtonText: { fontSize: 15, fontWeight: '700', color: '#5b21b6', textAlign: 'center' },
   dangerZoneTitle: {
     fontSize: 13,
     fontWeight: '800',

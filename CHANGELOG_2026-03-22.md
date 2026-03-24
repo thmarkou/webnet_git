@@ -76,6 +76,7 @@
 | `SEED_FIRESTORE.md` | Seed αφαιρέθηκε · καθαρισμός Firebase χειροκίνητα |
 | `CHANGELOG_2025-03-18.md` | Παλαιότερη σύνοψη project |
 | `CHANGELOG_2026-03-23.md` | Συνέχεια: multi-tenant, Super Admin, Firestore |
+| `CHANGELOG_2026-03-25.md` | Social-first αναζήτηση, catalog IDs, Admin διαχείριση επαγγελματιών |
 | `README.md` | Εκκίνηση, scripts, links docs |
 
 ---
