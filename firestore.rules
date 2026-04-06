@@ -1,12 +1,32 @@
 rules_version = '2';
 
 /**
- * Προσωρινή απλοποίηση για bootstrap + λειτουργία χωρίς «κολλήματα» στα writes.
- * ⚠️ Οι κανόνες είναι χαλαροί: οποιοσδήποτε signed-in μπορεί να γράψει tenants & τις υπόλοιπες συλλογές.
- * Σφίξε ξανά πριν production (multi-tenant + Super Admin μόνο όπου χρειάζεται).
+ * Chats, messages & notifications: αυστηρά (μόνο συμμετέχοντες / ιδιοκτήτης).
+ * Λοιπές συλλογές: signed-in read/write (ίδια λογική με το παλιό catch-all για bootstrap).
+ * Σφίξε tenants / admin / users όταν σταθεροποιηθεί το multi-tenant model.
  */
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    function chatDocParticipant() {
+      return request.auth.uid == resource.data.userId
+        || request.auth.uid == resource.data.professionalId;
+    }
+
+    function chatCreateValid(chatId) {
+      return request.resource.data.keys().hasAll(['userId', 'professionalId'])
+        && request.resource.data.userId is string
+        && request.resource.data.professionalId is string
+        && chatId == request.resource.data.userId + '_' + request.resource.data.professionalId
+        && (request.auth.uid == request.resource.data.userId
+          || request.auth.uid == request.resource.data.professionalId);
+    }
+
+    function chatExistsAndParticipant(chatId) {
+      let chat = get(/databases/$(database)/documents/chats/$(chatId));
+      return chat.exists
+        && (request.auth.uid == chat.data.userId || request.auth.uid == chat.data.professionalId);
+    }
 
     match /system_config/globals {
       allow read: if true;
@@ -23,11 +43,75 @@ service cloud.firestore {
       allow read, write: if request.auth != null;
     }
 
-    match /users/{userId} {
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+    // --- Chats (μόνο userId ↔ professionalId του εγγράφου) ---
+    match /chats/{chatId} {
+      allow read: if request.auth != null && chatDocParticipant();
+      allow create: if request.auth != null && chatCreateValid(chatId);
+      allow update: if request.auth != null && chatDocParticipant();
+      allow delete: if false;
     }
 
-    match /{document=**} {
+    // --- Μηνύματα: μόνο συμμετέχοντες στο chat · δημιουργία μόνο ως senderId ---
+    match /chats/{chatId}/messages/{messageId} {
+      allow read: if request.auth != null && chatExistsAndParticipant(chatId);
+      allow create: if request.auth != null
+        && chatExistsAndParticipant(chatId)
+        && request.resource.data.senderId == request.auth.uid
+        && request.resource.data.text is string
+        && request.resource.data.keys().hasAll(['text', 'senderId', 'createdAt']);
+      allow update, delete: if false;
+    }
+
+    // --- Ειδοποιήσεις: ανάγνωση/ενημέρωση μόνο ο ιδιοκτήτης · δημιουργία από τον fromUserId ---
+    match /users/{userId}/notifications/{notificationId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasAll(['type', 'title', 'body', 'read', 'createdAt', 'fromUserId'])
+        && request.resource.data.read == false
+        && request.resource.data.fromUserId == request.auth.uid
+        && request.resource.data.type in [
+          'friend_request',
+          'chat_message',
+          'appointment_request',
+          'appointment_confirmed',
+          'appointment_declined'
+        ];
+      allow update: if request.auth != null && request.auth.uid == userId;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    match /users/{userId}/friend_requests/{senderUid} {
+      allow read: if request.auth != null && (request.auth.uid == userId || request.auth.uid == senderUid);
+      allow create: if request.auth != null && request.auth.uid == senderUid;
+      allow delete: if request.auth != null && (request.auth.uid == userId || request.auth.uid == senderUid);
+      allow update: if false;
+    }
+
+    match /users/{userId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /cities/{cityId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /professions/{professionId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /importedProfessionals/{docId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /reviews/{reviewId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /appointments/{appointmentId} {
+      allow read, write: if request.auth != null;
+    }
+
+    match /deleted_professionals/{docId} {
       allow read, write: if request.auth != null;
     }
   }

@@ -1,7 +1,6 @@
 /**
- * Πόλεις και επαγγέλματα από Firestore με φίλτρο tenantId — ίδια λίστα με τη «Διαχείριση βάσης» του ηγέτη tenant.
- * Συνδεδεμένος χρήστης με tenantId: μόνο εγγραφές του tenant του. Super Admin χωρίς επιλεγμένο tenant: ευρύ query.
- * Πριν το login: ενσωματωμένο catalog (fallback εγγραφής).
+ * Πόλεις και επαγγέλματα από Firestore — παγκόσμιος κατάλογος (ίδια συλλογή για όλους).
+ * Πριν το login: ενσωματωμένο catalog (fallback).
  */
 import { useState, useEffect, useCallback } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
@@ -13,14 +12,7 @@ import { withTenantScope } from '../utils/tenantFirestore';
 import type { CatalogProfession } from '../utils/catalogSearchIds';
 
 export function useFirestoreCatalog() {
-  const {
-    tenantId,
-    isSuperAdmin,
-    hasTenantDataAccess,
-    loading: authLoading,
-    user,
-    catalogRefreshNonce,
-  } = useAuth();
+  const { loading: authLoading, user, catalogRefreshNonce } = useAuth();
   const [cities, setCities] = useState<CityOption[]>([]);
   const [professionCatalog, setProfessionCatalog] = useState<CatalogProfession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -28,21 +20,16 @@ export function useFirestoreCatalog() {
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      if (!hasTenantDataAccess) {
-        if (!user) {
-          setCities(CITIES.map((c) => ({ ...c, firestoreId: undefined })));
-          setProfessionCatalog(PROFESSIONS.map((name) => ({ id: name, name })));
-        } else {
-          setCities([]);
-          setProfessionCatalog([]);
-        }
+      if (!user) {
+        setCities(CITIES.map((c) => ({ ...c, firestoreId: undefined })));
+        setProfessionCatalog(PROFESSIONS.map((name) => ({ id: name, name })));
         return;
       }
 
       const citiesRef = collection(db, 'cities');
       const profRef = collection(db, 'professions');
-      const cityQ = withTenantScope(citiesRef, tenantId, isSuperAdmin);
-      const profQ = withTenantScope(profRef, tenantId, isSuperAdmin);
+      const cityQ = withTenantScope(citiesRef, null, true);
+      const profQ = withTenantScope(profRef, null, true);
 
       const [citySnap, profSnap] = await Promise.all([
         getDocs(cityQ).catch(() => null),
@@ -97,7 +84,7 @@ export function useFirestoreCatalog() {
     } finally {
       setLoading(false);
     }
-  }, [tenantId, isSuperAdmin, hasTenantDataAccess, user, catalogRefreshNonce]);
+  }, [user, catalogRefreshNonce]);
 
   useEffect(() => {
     if (authLoading) return;

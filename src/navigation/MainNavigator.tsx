@@ -11,12 +11,14 @@ import SuperAdminDashboard from '../screens/SuperAdminDashboard';
 import AdminManageProfessionalsScreen from '../screens/AdminManageProfessionalsScreen';
 import SubscriptionScreen from '../screens/SubscriptionScreen';
 import PaymentScreen from '../screens/Professional/PaymentScreen';
+import ChatScreen from '../screens/User/ChatScreen';
 import { useAuth } from '../context/AuthContext';
 import type { Professional } from '../api/types';
 import { isProSubscriptionBlocked } from '../utils/subscription';
 
 export type MainNavigatorParamList = {
   MainTabs: undefined;
+  Chat: { professional: Professional; clientUserId?: string };
   AdminDashboard: undefined;
   AdminAddProfessional: { editId?: string; editSource?: 'users' | 'imported' } | undefined;
   AdminManageProfessionals: undefined;
@@ -50,6 +52,16 @@ export function MainNavigator() {
       ) : (
         <>
           <Stack.Screen name="MainTabs" component={MainTabNavigator} />
+          <Stack.Screen
+            name="Chat"
+            component={ChatScreen}
+            options={{
+              headerShown: true,
+              title: 'Συνομιλία',
+              headerBackTitle: 'Πίσω',
+              headerTintColor: '#0f172a',
+            }}
+          />
           <Stack.Screen
             name="AdminDashboard"
             component={AdminDashboardScreen}

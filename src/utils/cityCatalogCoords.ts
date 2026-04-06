@@ -1,6 +1,7 @@
 import type { CityOption } from '../constants/data';
 import type { Professional, User } from '../api/types';
 import { finiteCoordsOrUndefined } from '../api/userDocument';
+import { cityOptionValue, normCatalogKey } from './catalogSearchIds';
 
 /**
  * Συντεταγμένες κέντρου πόλης από το catalog Firestore (ή ενσωματωμένο fallback).
@@ -26,6 +27,19 @@ export function userSearchHomeCityLabel(user: User | null): string {
     return (p.city?.trim() || user.location?.split(',')[0].trim() || '').trim();
   }
   return user.location?.split(',')[0].trim() || user.location?.trim() || '';
+}
+
+/**
+ * `cities/{id}` ή ετικέτα embedded που ταιριάζει με την πόλη του προφίλ — για προεπιλογή «τοπικής» αναζήτησης.
+ */
+export function userCityCatalogMatchId(user: User | null, cities: CityOption[]): string {
+  if (!user || cities.length === 0) return '';
+  const label = userSearchHomeCityLabel(user);
+  if (!label) return '';
+  const exact =
+    cities.find((c) => c.label === label) ??
+    cities.find((c) => normCatalogKey(c.label) === normCatalogKey(label));
+  return exact ? cityOptionValue(exact) : '';
 }
 
 /** Ετικέτα πόλης επαγγελματία για αντιστοίχιση με cities. */

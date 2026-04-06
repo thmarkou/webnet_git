@@ -17,9 +17,12 @@
     "sync-brand-assets": "bash scripts/sync-brand-assets.sh",
     "sync-ios-app-icon": "cp assets/icon.png ios/webnetapp/Images.xcassets/AppIcon.appiconset/App-Icon-1024x1024@1x.png",
     "deploy:firestore-rules": "firebase deploy --only firestore:rules",
-    "deploy:firestore": "firebase deploy --only firestore"
+    "deploy:firestore": "firebase deploy --only firestore",
+    "postinstall": "node scripts/ensure-expo-font-symlink.js",
+    "pod:install": "cd ios && pod install"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
     "@react-native-async-storage/async-storage": "2.2.0",
     "@react-navigation/bottom-tabs": "^7.15.5",
     "@react-navigation/native": "^7.1.33",
@@ -28,6 +31,7 @@
     "babel-preset-expo": "^55.0.11",
     "expo": "~55.0.7",
     "expo-document-picker": "~55.0.9",
+    "expo-font": "~55.0.6",
     "expo-file-system": "~55.0.11",
     "expo-image-manipulator": "~55.0.11",
     "expo-image-picker": "~55.0.13",

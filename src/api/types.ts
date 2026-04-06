@@ -77,6 +77,11 @@ export interface User {
   pendingRequests: string[];
   /** Multi-tenant: απαιτείται για πρόσβαση σε tenant-scoped δεδομένα (εκτός Super Admin) */
   tenantId?: string;
+  /** Φωτογραφία προφίλ (URL ή base64 μέσω `profileImageBase64`) */
+  profileImage?: string;
+  profileImageBase64?: string | null;
+  /** Ημερομηνία εγγραφής (νέα εγγραφή — για analytics) */
+  createdAt?: FirestoreTimestampish;
 }
 
 export interface GeoCoordinates {
@@ -102,9 +107,6 @@ export interface Professional extends User {
   /** Σύνδεση με `cities/{id}` — κρίσιμο για κοινωνική αναζήτηση / φίλτρα */
   cityId?: string;
   country: string;
-  profileImage?: string;
-  /** null = χωρίς φωτογραφία → εικονίδιο Lucide στο UI */
-  profileImageBase64?: string | null;
   /**
    * Τύπος προφίλ για avatar χωρίς φωτογραφία (Άνδρας / Γυναίκα / Εταιρεία).
    * Ίδιο νοηματικά με πεδίο «Τύπος» στη φόρμα εγγραφής.
@@ -126,7 +128,7 @@ export interface Professional extends User {
   subscriptionEndsAt?: FirestoreTimestampish;
 }
 
-export type AppointmentStatus = 'pending' | 'confirmed' | 'past';
+export type AppointmentStatus = 'pending' | 'confirmed' | 'declined' | 'past';
 
 export interface Appointment {
   id: string;
@@ -137,11 +139,45 @@ export interface Appointment {
   price: number;
 }
 
+export type NotificationType =
+  | 'friend_request'
+  | 'chat_message'
+  | 'appointment_request'
+  | 'appointment_confirmed'
+  | 'appointment_declined';
+
+export interface NotificationDoc {
+  id?: string;
+  type: NotificationType;
+  title: string;
+  body: string;
+  read: boolean;
+  createdAt?: FirestoreTimestampish;
+  chatId?: string;
+  appointmentId?: string;
+  fromUserId?: string;
+}
+
 export interface Review {
   id?: string;
+  /** Ίδιο με professionalId — uid επαγγελματία */
   proId: string;
+  professionalId?: string;
   userId: string;
+  reviewerId?: string;
+  reviewerName?: string;
   stars: number;
   comment: string;
   timestamp?: Date | { seconds: number; nanoseconds: number };
+}
+
+/** `users/{toUid}/friend_requests/{fromUid}` — αίτημα φιλίας (pending μέχρι αποδοχή). */
+export interface FriendRequestDoc {
+  fromUid: string;
+  toUid: string;
+  status: 'pending';
+  fromFirstName: string;
+  fromLastName: string;
+  fromPhone?: string;
+  createdAt?: FirestoreTimestampish;
 }

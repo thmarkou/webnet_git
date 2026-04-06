@@ -39,6 +39,7 @@ import {
   SYSTEM_CONFIG_COLLECTION,
   GLOBALS_DOC_ID,
 } from '../api/systemConfig';
+import { SuperAdminGlobalStatistics } from '../components/SuperAdminGlobalStatistics';
 
 type TenantRow = TenantDoc & { id: string };
 
@@ -46,9 +47,12 @@ const globalsRef = doc(db, SYSTEM_CONFIG_COLLECTION, GLOBALS_DOC_ID);
 
 export default function SuperAdminDashboard() {
   const navigation = useNavigation<StackNavigationProp<MainNavigatorParamList>>();
-  const { isSuperAdmin, user, refreshTenantAccess, refreshUserProfile } = useAuth();
+  const { isSuperAdmin, user, userProfile, refreshTenantAccess, refreshUserProfile } = useAuth();
   const [tenants, setTenants] = useState<TenantRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [hubTab, setHubTab] = useState<'main' | 'insights'>('main');
+
+  const canSeeInsights = userProfile?.role === 'superadmin';
 
   const [superEmailsList, setSuperEmailsList] = useState<string[]>([]);
   const [transferEmail, setTransferEmail] = useState('');
@@ -291,7 +295,38 @@ export default function SuperAdminDashboard() {
     <ScrollView style={styles.root} contentContainerStyle={styles.section}>
       <Text style={styles.title}>Super Admin</Text>
       {user?.email ? <Text style={styles.sub}>Συνδεδεμένος: {user.email}</Text> : null}
+      {isSuperAdmin && !canSeeInsights ? (
+        <Text style={styles.insightsHint}>
+          Το tab Insights εμφανίζεται μόνο όταν το προφίλ σου στο Firestore έχει role «superadmin» (π.χ. μετά το
+          πρώτο setup βάσης).
+        </Text>
+      ) : null}
 
+      {canSeeInsights ? (
+        <View style={styles.tabRow}>
+          <TouchableOpacity
+            style={[styles.tabChip, hubTab === 'main' && styles.tabChipActive]}
+            onPress={() => setHubTab('main')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: hubTab === 'main' }}
+          >
+            <Text style={[styles.tabChipText, hubTab === 'main' && styles.tabChipTextActive]}>Επισκόπηση</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tabChip, hubTab === 'insights' && styles.tabChipActive]}
+            onPress={() => setHubTab('insights')}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: hubTab === 'insights' }}
+          >
+            <Text style={[styles.tabChipText, hubTab === 'insights' && styles.tabChipTextActive]}>Insights</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+
+      {canSeeInsights && hubTab === 'insights' ? (
+        <SuperAdminGlobalStatistics />
+      ) : (
+        <>
       <TouchableOpacity
         style={styles.secondary}
         onPress={() => navigation.navigate('AdminManageProfessionals')}
@@ -463,6 +498,8 @@ export default function SuperAdminDashboard() {
       <TouchableOpacity style={styles.secondary} onPress={() => void assignUserToTenant()}>
         <Text style={styles.secondaryText}>Αποθήκευση tenantId στον χρήστη</Text>
       </TouchableOpacity>
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -522,6 +559,37 @@ const styles = StyleSheet.create({
   warn: { fontSize: 16, color: '#b45309', textAlign: 'center' },
   title: { fontSize: 22, fontWeight: '800', color: '#4c1d95' },
   sub: { fontSize: 13, color: '#6b7280', marginTop: 6, marginBottom: 16 },
+  insightsHint: {
+    fontSize: 12,
+    color: '#92400e',
+    backgroundColor: '#fffbeb',
+    padding: 10,
+    borderRadius: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#fcd34d',
+    lineHeight: 18,
+  },
+  tabRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 16,
+  },
+  tabChip: {
+    flex: 1,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: '#ede9fe',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e9d5ff',
+  },
+  tabChipActive: {
+    backgroundColor: '#7c3aed',
+    borderColor: '#7c3aed',
+  },
+  tabChipText: { fontSize: 15, fontWeight: '700', color: '#5b21b6' },
+  tabChipTextActive: { color: '#fff' },
   sectionTitle: { fontSize: 17, fontWeight: '700', color: '#1f2937', marginBottom: 10 },
   hint: { fontSize: 13, color: '#6b7280', lineHeight: 19, marginBottom: 10 },
   card: {

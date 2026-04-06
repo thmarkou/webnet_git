@@ -352,6 +352,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       friends: [],
       favorites: [],
       pendingRequests: [],
+      createdAt: Timestamp.now(),
     };
 
     await setDoc(doc(db, 'users', firebaseUser.uid), userDoc);
@@ -424,6 +425,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       accountStatus: 'trial',
       subscriptionPlan: null,
       tenantId: DEFAULT_APP_TENANT_ID,
+      createdAt: Timestamp.now(),
     };
 
     await setDoc(doc(db, 'users', firebaseUser.uid), proDoc);

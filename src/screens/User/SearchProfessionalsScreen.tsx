@@ -1,8 +1,9 @@
 /**
- * Αναζήτηση επαγγελματιών (social-first): φίλοι στο `users/{uid}.friends` (array UIDs).
- * Κριτικές φίλων στη συλλογή `reviews` → ανάδειξη + ετικέτα «Χρησιμοποιήθηκε από φίλο σου · …».
+ * Αναζήτηση επαγγελματιών (social-first, παγκόσμια βάση): φίλοι στο `users/{uid}.friends` (array UIDs).
+ * Κριτικές φίλων ≥4★ στη συλλογή `reviews` → ανάδειξη + ετικέτα «Χρησιμοποιήθηκε από φίλο σου · …».
  * Φίλτρα επαγγέλματος/πόλης με IDs καταλόγου Firestore (συμβατότητα με παλιά δεδομένα μόνο με κείμενο).
- * Κατάταξη: 1) βαθμολόγηση από φίλους, 2) μέση βαθμολογία, 3) εγγύτητα (pin ή κέντρο πόλης).
+ * Κατάταξη: 1) φίλοι (πανελλαδικά), 2) τοπικοί (πόλη προφίλ ή ακτίνα km), 3) υψηλή βαθμολογία, 4) εγγύτητα.
+ * Οι φίλοι εμφανίζονται πάντα ακόμη κι αν είναι εκτός πόλης/ακτίνας.
  */
 import React, { useState, useEffect, useMemo, useCallback, useLayoutEffect, useRef } from 'react';
 import {
@@ -16,12 +17,11 @@ import {
   ScrollView,
   Modal,
   TextInput,
-  Pressable,
-  Linking,
   Alert,
   Platform,
 } from 'react-native';
 import { useNavigation, useFocusEffect } from '@react-navigation/native';
+import type { NavigationProp, ParamListBase } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import {
   collection,
@@ -37,15 +37,7 @@ import {
   type DocumentData,
 } from 'firebase/firestore';
 import MapView, { Marker, Callout } from 'react-native-maps';
-import {
-  Phone,
-  Mail,
-  MessageCircle,
-  SlidersHorizontal,
-  Map as MapIcon,
-  LayoutList,
-  Heart,
-} from 'lucide-react-native';
+import { SlidersHorizontal, Map as MapIcon, LayoutList, Heart } from 'lucide-react-native';
 import { db } from '../../api';
 import type { Professional, Review } from '../../api/types';
 import { haversineDistance } from '../../utils/haversine';
@@ -70,6 +62,7 @@ import {
   professionalCatalogCityLabel,
   resolveCityCoordinates,
   userSearchHomeCityLabel,
+  userCityCatalogMatchId,
   professionalMapCoordinates,
 } from '../../utils/cityCatalogCoords';
 import { ProfessionalSearchResultCard } from '../../components/ProfessionalSearchResultCard';
@@ -80,6 +73,8 @@ import {
   proMatchesProfessionFilter,
   type CatalogProfession,
 } from '../../utils/catalogSearchIds';
+import { CommunicationModal } from '../../components/CommunicationModal';
+import { navigateToChat } from '../../utils/navigateToChat';
 
 function mapDocToProfessional(id: string, data: Record<string, unknown>): Professional {
   return normalizeUserProfileFromFirestore(id, data) as Professional;
@@ -119,15 +114,7 @@ function chunkArray<T>(arr: readonly T[], size: number): T[][] {
 
 export default function SearchProfessionalsScreen() {
   const navigation = useNavigation<NativeStackNavigationProp<SearchStackParamList>>();
-  const {
-    user,
-    userProfile,
-    loading: authLoading,
-    hasTenantDataAccess,
-    isSuperAdmin,
-    tenantId,
-    refreshUserProfile,
-  } = useAuth();
+  const { user, userProfile, loading: authLoading, refreshUserProfile } = useAuth();
   const { cities, professionCatalog } = useFirestoreCatalog();
   const [professionals, setProfessionals] = useState<Professional[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
@@ -238,11 +225,12 @@ export default function SearchProfessionalsScreen() {
           const data = d.data();
           merged.push({
             id: d.id,
-            proId: String(data.proId ?? ''),
-            userId: String(data.userId ?? ''),
+            proId: String(data.proId ?? data.professionalId ?? ''),
+            userId: String(data.userId ?? data.reviewerId ?? ''),
             stars: typeof data.stars === 'number' ? data.stars : 0,
-            comment: data.comment ?? '',
+            comment: typeof data.comment === 'string' ? data.comment : '',
             timestamp: data.timestamp,
+            reviewerName: typeof data.reviewerName === 'string' ? data.reviewerName : undefined,
           });
         }
       }
@@ -288,7 +276,7 @@ export default function SearchProfessionalsScreen() {
   const reloadProfessionals = useCallback(
     async (showFullScreenSpinner: boolean) => {
       if (authLoading) return;
-      if (!hasTenantDataAccess) {
+      if (!user) {
         setProfessionals([]);
         setLoading(false);
         return;
@@ -296,9 +284,9 @@ export default function SearchProfessionalsScreen() {
       if (showFullScreenSpinner) setLoading(true);
       try {
         const usersRef = collection(db, 'users') as CollectionReference<DocumentData>;
-        const uq = usersProsQuery(usersRef, tenantId, isSuperAdmin);
+        const uq = usersProsQuery(usersRef, null, true);
         const impRef = collection(db, 'importedProfessionals');
-        const iq = withTenantScope(impRef, tenantId, isSuperAdmin);
+        const iq = withTenantScope(impRef, null, true);
         const [userSnap, importedSnap] = await Promise.all([
           getDocs(uq),
           getDocs(iq).catch(() => null),
@@ -319,7 +307,7 @@ export default function SearchProfessionalsScreen() {
         if (showFullScreenSpinner) setLoading(false);
       }
     },
-    [authLoading, hasTenantDataAccess, isSuperAdmin, tenantId]
+    [authLoading, user]
   );
 
   useFocusEffect(
@@ -355,19 +343,19 @@ export default function SearchProfessionalsScreen() {
   const friendRecommendedProIds = useMemo(() => {
     const s = new Set<string>();
     for (const r of reviews) {
-      if (myFriendIds.includes(r.userId) && typeof r.stars === 'number' && r.stars >= 1 && r.proId) {
+      if (myFriendIds.includes(r.userId) && typeof r.stars === 'number' && r.stars >= 4 && r.proId) {
         s.add(r.proId);
       }
     }
     return s;
   }, [reviews, myFriendIds]);
 
-  /** Πρώτος φίλος (UID) που άφησε κριτική ≥1★ για τον επαγγελματία — για ετικέτα ονόματος. */
+  /** Πρώτος φίλος (UID) που άφησε κριτική ≥4★ για τον επαγγελματία — για ετικέτα ονόματος. */
   const friendReviewerUidByProId = useMemo(() => {
     const m = new Map<string, string>();
     for (const r of reviews) {
       if (!r.proId || !myFriendIds.includes(r.userId)) continue;
-      if (typeof r.stars !== 'number' || r.stars < 1) continue;
+      if (typeof r.stars !== 'number' || r.stars < 4) continue;
       if (!m.has(r.proId)) m.set(r.proId, r.userId);
     }
     return m;
@@ -376,6 +364,12 @@ export default function SearchProfessionalsScreen() {
   const userHomeCityLabel = useMemo(
     () => userSearchHomeCityLabel(userProfile),
     [userProfile]
+  );
+
+  /** Πόλη προφίλ → id καταλόγου — για «τοπική» κατάταξη όταν δεν έχει επιλεγεί πόλη στο φίλτρο. */
+  const profileCityCatalogId = useMemo(
+    () => userCityCatalogMatchId(userProfile, cities),
+    [userProfile, cities]
   );
 
   const userHomeCoords = useMemo(
@@ -419,6 +413,7 @@ export default function SearchProfessionalsScreen() {
 
   const filtered = useMemo(() => {
     let result = professionals;
+    const isFriendBoosted = (pro: Professional) => friendRecommendedProIds.has(pro.uid);
 
     const q = searchQuery.trim().toLowerCase();
     if (q) {
@@ -435,18 +430,18 @@ export default function SearchProfessionalsScreen() {
       );
     }
     if (filterCityId.trim()) {
-      result = result.filter((pro) => proMatchesCityFilter(pro, filterCityId, cities));
+      result = result.filter(
+        (pro) => isFriendBoosted(pro) || proMatchesCityFilter(pro, filterCityId, cities)
+      );
     }
 
     const radiusOpt = RADIUS_FILTER_OPTIONS.find((o) => o.key === radiusKey);
     const maxKm = radiusOpt?.km;
-    if (maxKm != null) {
-      if (userHomeCoords) {
-        result = result.filter((pro) => {
-          const km = distanceKmForRanking(pro);
-          return km <= maxKm;
-        });
-      }
+    if (maxKm != null && userHomeCoords) {
+      result = result.filter((pro) => {
+        const km = distanceKmForRanking(pro);
+        return isFriendBoosted(pro) || km <= maxKm;
+      });
     }
 
     const minOpt = MIN_RATING_OPTIONS.find((o) => o.key === minRatingKey);
@@ -471,7 +466,26 @@ export default function SearchProfessionalsScreen() {
     distanceKmForRanking,
     professionCatalog,
     cities,
+    friendRecommendedProIds,
   ]);
+
+  /** «Τοπικός» για κατάταξη: ρητή πόλη φίλτρου, αλλιώς ακτίνα από την πόλη-βάση, αλλιώς ίδια πόλη με το προφίλ. */
+  const isProInLocalArea = useCallback(
+    (pro: Professional): boolean => {
+      if (filterCityId.trim()) {
+        return proMatchesCityFilter(pro, filterCityId, cities);
+      }
+      const maxKm = RADIUS_FILTER_OPTIONS.find((o) => o.key === radiusKey)?.km;
+      if (maxKm != null && userHomeCoords) {
+        return distanceKmForRanking(pro) <= maxKm;
+      }
+      if (profileCityCatalogId) {
+        return proMatchesCityFilter(pro, profileCityCatalogId, cities);
+      }
+      return false;
+    },
+    [filterCityId, radiusKey, userHomeCoords, profileCityCatalogId, cities, distanceKmForRanking]
+  );
 
   const sortedFiltered = useMemo(() => {
     const list = [...filtered];
@@ -491,6 +505,10 @@ export default function SearchProfessionalsScreen() {
       const recB = friendRecommendedProIds.has(b.uid) ? 1 : 0;
       if (recA !== recB) return recB - recA;
 
+      const localA = isProInLocalArea(a) ? 1 : 0;
+      const localB = isProInLocalArea(b) ? 1 : 0;
+      if (localA !== localB) return localB - localA;
+
       if (priceSort === 'asc') {
         const pc = comparePriceAsc(a, b);
         if (pc !== 0) return pc;
@@ -509,12 +527,7 @@ export default function SearchProfessionalsScreen() {
       return distanceKmForRanking(a) - distanceKmForRanking(b);
     });
     return list;
-  }, [
-    filtered,
-    friendRecommendedProIds,
-    priceSort,
-    distanceKmForRanking,
-  ]);
+  }, [filtered, friendRecommendedProIds, priceSort, distanceKmForRanking, isProInLocalArea]);
 
   const mapMarkers = useMemo(() => {
     const out: { pro: Professional; coord: { latitude: number; longitude: number } }[] = [];
@@ -593,9 +606,9 @@ export default function SearchProfessionalsScreen() {
         autoCapitalize="none"
         {...(Platform.OS === 'ios' ? { clearButtonMode: 'while-editing' as const } : {})}
       />
-      {!userHomeCoords && userProfile && hasTenantDataAccess ? (
+      {!userHomeCoords && userProfile && user ? (
         <Text style={styles.hintMuted}>
-          Για απόσταση σε km, η πόλη στο προφίλ σου πρέπει να ταιριάζει με μια πόλη του catalog (Firestore).
+          Για απόσταση σε km, η πόλη στο προφίλ σου πρέπει να ταιριάζει με μια πόλη του καταλόγου (Firestore).
         </Text>
       ) : null}
     </View>
@@ -609,7 +622,7 @@ export default function SearchProfessionalsScreen() {
     >
       <View style={styles.filtersInner}>
         <FormSelect
-          label="Επάγγελμα (κατάλογος tenant)"
+          label="Επάγγελμα (κατάλογος)"
           value={filterProfessionId}
           options={professionCatalog.map((p: CatalogProfession) => p.id)}
           onChange={setFilterProfessionId}
@@ -623,7 +636,7 @@ export default function SearchProfessionalsScreen() {
           }
         />
         <FormSelect
-          label="Πόλη επαγγελματία (κατάλογος tenant)"
+          label="Πόλη επαγγελματία (κατάλογος)"
           value={filterCityId}
           options={cities.map(cityOptionValue)}
           onChange={setFilterCityId}
@@ -644,7 +657,7 @@ export default function SearchProfessionalsScreen() {
         />
         {radiusNeedsUserCity && (
           <Text style={styles.warnText}>
-            Συμπλήρωσε/διόρθωσε την πόλη στο προφίλ σου ώστε να ταιριάζει με τις πόλεις του tenant. Η απόσταση
+            Συμπλήρωσε/διόρθωσε την πόλη στο προφίλ σου ώστε να ταιριάζει με τις πόλεις του καταλόγου. Η απόσταση
             υπολογίζεται με Haversine μεταξύ συντεταγμένων από τη συλλογή cities.
           </Text>
         )}
@@ -689,21 +702,9 @@ export default function SearchProfessionalsScreen() {
     );
   }
 
-  const tenantWallBanner =
-    !authLoading && user && !hasTenantDataAccess ? (
-      <View style={styles.tenantWallBanner}>
-        <Text style={styles.tenantWallTitle}>Χωρίς tenant στο προφίλ</Text>
-        <Text style={styles.tenantWallText}>
-          Συνήθως συμπληρώνεται αυτόματα στη σύνδεση. Αν εμφανίζεται αυτό το μήνυμα, κάνε αποσύνδεση και ξανά
-          σύνδεση· αν συνεχίζει, επικοινώνησε με διαχειριστή (ή τρέξε εφάπαξ{' '}
-          <Text style={{ fontWeight: '700' }}>npm run backfill-user-tenants</Text> με service account).
-        </Text>
-      </View>
-    ) : null;
-
   const emptyMessage =
-    !hasTenantDataAccess && user && !authLoading
-      ? 'Δεν είναι διαθέσιμα δεδομένα χωρίς tenant.'
+    !user && !authLoading
+      ? 'Συνδέσου για να δεις επαγγελματίες.'
       : professionals.length === 0
         ? 'Η λίστα επαγγελματιών είναι ακόμα άδεια. Ο διαχειριστής μπορεί να προσθέσει επαγγελματίες ή να γίνει εισαγωγή από Excel.'
         : 'Κανένας επαγγελματίας δεν ταιριάζει με τα φίλτρα σου. Δοκίμασε άλλη πόλη, επάγγελμα ή χαμηλότερη ελάχιστη βαθμολογία.';
@@ -747,21 +748,16 @@ export default function SearchProfessionalsScreen() {
         <FlatList
           data={sortedFiltered}
           keyExtractor={(item) => item.uid}
-          ListHeaderComponent={
-            <>
-              {tenantWallBanner}
-              {listHeader}
-            </>
-          }
+          ListHeaderComponent={listHeader}
           renderItem={({ item }) => {
             const social = friendRecommendedProIds.has(item.uid);
             const reviewerUid = friendReviewerUidByProId.get(item.uid);
             const friendName = reviewerUid ? friendDisplayByUid[reviewerUid] : undefined;
             const friendLine =
               social && friendName
-                ? `Χρησιμοποιήθηκε από φίλο σου · ${friendName}`
+                ? `Φίλος σου με βαθμολογία 4★+ · ${friendName}`
                 : social
-                  ? 'Χρησιμοποιήθηκε από φίλο σου'
+                  ? 'Φίλος σου με βαθμολογία 4★+'
                   : null;
             return (
             <ProfessionalSearchResultCard
@@ -784,7 +780,6 @@ export default function SearchProfessionalsScreen() {
         />
       ) : (
         <View style={styles.mapWrap}>
-          {tenantWallBanner ? <View style={styles.mapBannerPad}>{tenantWallBanner}</View> : null}
           <View style={styles.mapSearchPad}>{listHeader}</View>
           <MapView
             ref={mapRef}
@@ -809,12 +804,12 @@ export default function SearchProfessionalsScreen() {
               </Marker>
             ))}
           </MapView>
-          {filtered.length === 0 && hasTenantDataAccess ? (
+          {filtered.length === 0 && user ? (
             <View style={styles.mapEmptyOverlay} pointerEvents="none">
               <Text style={styles.mapEmptyText}>{emptyMessage}</Text>
             </View>
           ) : null}
-          {mapMarkers.length === 0 && filtered.length > 0 && hasTenantDataAccess ? (
+          {mapMarkers.length === 0 && filtered.length > 0 && user ? (
             <View style={styles.mapEmptyOverlay} pointerEvents="none">
               <Text style={styles.mapEmptyText}>
                 Οι επαγγελματίες δεν έχουν συντεταγμένες χάρτη ή πόλη στο catalog — δεν εμφανίζονται κουκίδες.
@@ -841,61 +836,13 @@ export default function SearchProfessionalsScreen() {
         </View>
       </Modal>
 
-      <Modal
+      <CommunicationModal
         visible={communicatePro != null}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setCommunicatePro(null)}
-      >
-        <View style={styles.commBackdrop}>
-          <Pressable style={styles.commBackdropTap} onPress={() => setCommunicatePro(null)} />
-          <View style={styles.commSheet}>
-            <Text style={styles.commTitle}>Επικοινωνία</Text>
-            {communicatePro ? (
-              <>
-                <Text style={styles.commSub} numberOfLines={2}>
-                  {communicatePro.businessName || `${communicatePro.firstName} ${communicatePro.lastName}`}
-                </Text>
-                <TouchableOpacity
-                  style={styles.commRow}
-                  onPress={() => {
-                    if (communicatePro.phone) Linking.openURL(`tel:${communicatePro.phone}`);
-                    else Alert.alert('Τηλέφωνο', 'Δεν έχει δηλωθεί τηλέφωνο.');
-                    setCommunicatePro(null);
-                  }}
-                >
-                  <Phone size={22} color="#2563eb" />
-                  <Text style={styles.commRowText}>Τηλέφωνο</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.commRow}
-                  onPress={() => {
-                    if (communicatePro.email) Linking.openURL(`mailto:${communicatePro.email}`);
-                    else Alert.alert('Email', 'Δεν έχει δηλωθεί email.');
-                    setCommunicatePro(null);
-                  }}
-                >
-                  <Mail size={22} color="#2563eb" />
-                  <Text style={styles.commRowText}>Email</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.commRow}
-                  onPress={() => {
-                    setCommunicatePro(null);
-                    Alert.alert('Chat', 'Η συνομιλία θα είναι διαθέσιμη σύντομα.');
-                  }}
-                >
-                  <MessageCircle size={22} color="#94a3b8" />
-                  <Text style={[styles.commRowText, styles.commRowDisabled]}>Chat (σύντομα)</Text>
-                </TouchableOpacity>
-              </>
-            ) : null}
-            <TouchableOpacity style={styles.commCancel} onPress={() => setCommunicatePro(null)}>
-              <Text style={styles.commCancelText}>Άκυρο</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+        professional={communicatePro}
+        onClose={() => setCommunicatePro(null)}
+        canUseChat={communicatePro ? !communicatePro.imported : true}
+        onOpenChat={(pro) => navigateToChat(navigation as unknown as NavigationProp<ParamListBase>, pro)}
+      />
     </View>
   );
 }
@@ -919,7 +866,6 @@ const styles = StyleSheet.create({
   },
   hintMuted: { fontSize: 12, color: '#64748b', marginTop: 8, lineHeight: 17 },
   mapWrap: { flex: 1 },
-  mapBannerPad: { paddingHorizontal: 12, paddingTop: 8 },
   mapSearchPad: { paddingHorizontal: 12, paddingBottom: 8, backgroundColor: '#f8fafc' },
   map: { flex: 1 },
   mapEmptyOverlay: {
@@ -978,40 +924,4 @@ const styles = StyleSheet.create({
   },
   switchLabel: { fontSize: 14, fontWeight: '600', color: '#475569', flex: 1 },
   empty: { textAlign: 'center', color: '#64748b', marginTop: 24, fontSize: 15, lineHeight: 22, paddingHorizontal: 12 },
-  tenantWallBanner: {
-    backgroundColor: '#fef3c7',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#fcd34d',
-  },
-  tenantWallTitle: { fontSize: 15, fontWeight: '700', color: '#92400e', marginBottom: 6 },
-  tenantWallText: { fontSize: 13, color: '#78350f', lineHeight: 18 },
-  commBackdrop: {
-    flex: 1,
-    backgroundColor: 'rgba(15,23,42,0.45)',
-  },
-  commBackdropTap: { flex: 1 },
-  commSheet: {
-    backgroundColor: '#fff',
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 20,
-    paddingBottom: 28,
-  },
-  commTitle: { fontSize: 18, fontWeight: '800', color: '#0f172a' },
-  commSub: { fontSize: 14, color: '#64748b', marginTop: 6, marginBottom: 16 },
-  commRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 14,
-    paddingVertical: 14,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f1f5f9',
-  },
-  commRowText: { fontSize: 16, color: '#0f172a', fontWeight: '600' },
-  commRowDisabled: { color: '#94a3b8' },
-  commCancel: { marginTop: 16, alignItems: 'center', paddingVertical: 12 },
-  commCancelText: { fontSize: 16, color: '#64748b', fontWeight: '600' },
 });

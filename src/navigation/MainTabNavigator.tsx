@@ -3,7 +3,7 @@
  */
 import React from 'react';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
-import { Search, Users, Calendar, Settings, User } from 'lucide-react-native';
+import { Search, Users, Calendar, Settings, User, Bell } from 'lucide-react-native';
 import { useAuth } from '../context/AuthContext';
 import { useTrialReminders } from '../hooks/useTrialReminders';
 import type { Professional } from '../api/types';
@@ -11,6 +11,7 @@ import type { Professional } from '../api/types';
 import { SearchStack } from './SearchStack';
 import FriendsScreen from '../screens/User/FriendsScreen';
 import AppointmentsScreen from '../screens/User/AppointmentsScreen';
+import NotificationsScreen from '../screens/User/NotificationsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 
 import MyProfileScreen from '../screens/Professional/MyProfileScreen';
@@ -50,6 +51,15 @@ export function MainTabNavigator() {
             title: 'Τα Ραντεβού μου',
             tabBarLabel: 'Ραντεβού',
             tabBarIcon: ({ color, size }) => <Calendar size={size} color={color} />,
+          }}
+        />
+        <Tab.Screen
+          name="Notifications"
+          component={NotificationsScreen}
+          options={{
+            title: 'Ειδοποιήσεις',
+            tabBarLabel: 'Ειδοποιήσεις',
+            tabBarIcon: ({ color, size }) => <Bell size={size} color={color} />,
           }}
         />
         <Tab.Screen
@@ -98,6 +108,15 @@ export function MainTabNavigator() {
           title: 'Φίλοι',
           tabBarLabel: 'Φίλοι',
           tabBarIcon: ({ color, size }) => <Users size={size} color={color} />,
+        }}
+      />
+      <Tab.Screen
+        name="Notifications"
+        component={NotificationsScreen}
+        options={{
+          title: 'Ειδοποιήσεις',
+          tabBarLabel: 'Ειδοποιήσεις',
+          tabBarIcon: ({ color, size }) => <Bell size={size} color={color} />,
         }}
       />
       <Tab.Screen

@@ -77,6 +77,7 @@
 | `CHANGELOG_2025-03-18.md` | Παλαιότερη σύνοψη project |
 | `CHANGELOG_2026-03-23.md` | Συνέχεια: multi-tenant, Super Admin, Firestore |
 | `CHANGELOG_2026-03-25.md` | Social-first αναζήτηση, catalog IDs, Admin διαχείριση επαγγελματιών |
+| `CHANGELOG_2026-04-07.md` | Επικοινωνία/ειδοποιήσεις, Firestore rules, Super Admin Insights, iOS expo-font |
 | `README.md` | Εκκίνηση, scripts, links docs |
 
 ---
