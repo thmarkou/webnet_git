@@ -62,3 +62,4 @@
 
 - **`scripts/clone-user-from-email.js`** + **`npm run clone-user`**: αντιγραφή προφίλ Firestore από `theofanis.markou@gmail.com` → νέο Auth + `users/{uid}` (κενά friends/pending/favorites). Απαιτεί `serviceAccountKey.json`.
 - **Σημείωση Firebase:** κωδικός ελάχιστο 6 χαρακτήρες — το `1234` δεν γίνεται δεκτό· χρησιμοποιήθηκε `123456` (ή `NEW_USER_PASSWORD=...`).
+- **Env `TARGET_EMAIL`:** προαιρετικό override χωρίς επεξεργασία του αρχείου (`TARGET_EMAIL=... NEW_USER_PASSWORD=... npm run clone-user`).

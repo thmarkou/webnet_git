@@ -6,8 +6,10 @@
  *
  * Ρυθμίσεις (επεξεργασία παρακάτω ή env):
  *   NEW_USER_PASSWORD — κωδικός (Firebase: ελάχιστο 6 χαρακτήρες· το "1234" από μόνο του απορρίπτεται)
+ *   TARGET_EMAIL — προαιρετικά· αλλιώς χρησιμοποιείται η σταθερά TARGET_EMAIL παρακάτω
  *
  * Τρέξε από τη ρίζα: npm run clone-user
+ * Παράδειγμα: TARGET_EMAIL=foo@bar.com NEW_USER_PASSWORD=123456 npm run clone-user
  */
 const admin = require('firebase-admin');
 const path = require('path');
@@ -16,7 +18,7 @@ const fs = require('fs');
 const SERVICE_ACCOUNT_PATH = path.join(__dirname, '..', 'serviceAccountKey.json');
 
 const SOURCE_EMAIL = 'theofanis.markou@gmail.com';
-const TARGET_EMAIL = 'mi.skal2467@gmail.com';
+const TARGET_EMAIL = process.env.TARGET_EMAIL || 'xarilaos.skaltsounakis@gmail.com';
 /** Firebase Auth minimum 6 characters. Override: NEW_USER_PASSWORD=123456 npm run clone-user */
 const TARGET_PASSWORD = process.env.NEW_USER_PASSWORD || '123456';
 
