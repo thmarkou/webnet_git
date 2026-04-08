@@ -55,3 +55,10 @@
 ---
 
 *Αρχεία `ios/Pods` / `Podfile.lock`: ανανεώνονται με `npm run pod:install` μετά από `npm install`.*
+
+---
+
+## 6. Script κλωνοποίησης χρήστη (μετά το 7/4)
+
+- **`scripts/clone-user-from-email.js`** + **`npm run clone-user`**: αντιγραφή προφίλ Firestore από `theofanis.markou@gmail.com` → νέο Auth + `users/{uid}` (κενά friends/pending/favorites). Απαιτεί `serviceAccountKey.json`.
+- **Σημείωση Firebase:** κωδικός ελάχιστο 6 χαρακτήρες — το `1234` δεν γίνεται δεκτό· χρησιμοποιήθηκε `123456` (ή `NEW_USER_PASSWORD=...`).

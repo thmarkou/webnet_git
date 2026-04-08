@@ -19,7 +19,8 @@
     "deploy:firestore-rules": "firebase deploy --only firestore:rules",
     "deploy:firestore": "firebase deploy --only firestore",
     "postinstall": "node scripts/ensure-expo-font-symlink.js",
-    "pod:install": "cd ios && pod install"
+    "pod:install": "cd ios && pod install",
+    "clone-user": "node scripts/clone-user-from-email.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
